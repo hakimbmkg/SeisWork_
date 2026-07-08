@@ -1,0 +1,998 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>SeisWork Presentation</title>
+  <link rel="icon" type="image/svg+xml" href="/static/img/seiswork-icon.svg"/>
+  <script src="/static/js/native-bridge.js"></script>
+  <link rel="stylesheet" href="/static/css/leaflet-1.9.4.min.css"/>
+  <script src="/static/js/vendor/leaflet-1.9.4.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg:    var(--bg-panel); --accent: #3b82f6; --accent2: #60a5fa;
+      --text:  var(--text-main); --text2: var(--text-muted);  --border: #1e2d40; --stage: #07090f;
+    }
+    html, body { height: 100%; background: var(--stage); color: var(--text);
+      font-family: 'Segoe UI', system-ui, sans-serif; overflow: hidden; }
+
+    /* ── Chrome ── */
+    #pres-topbar {
+      position: fixed; top: 0; left: 0; right: 0; height: 42px; z-index: 300;
+      background: rgba(7,9,15,.96); backdrop-filter: blur(10px);
+      border-bottom: 1px solid #111a28;
+      display: flex; align-items: center; gap: .6rem; padding: 0 .9rem;
+    }
+    .pres-logo { font-weight: 800; font-size: .9rem; letter-spacing: .5px; flex-shrink: 0; }
+    .pres-logo span { color: var(--accent); }
+    #pres-title-bar  { flex: 1; font-size: .8rem; color: var(--text2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    #pres-author-bar { font-size: .7rem; color: #445060; flex-shrink: 0; }
+    .pt-right { display: flex; align-items: center; gap: .45rem; margin-left: auto; flex-shrink: 0; }
+    #pres-counter { font-size: .7rem; color: var(--text2); font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .pres-btn {
+      background: #131c2c; border: 1px solid #1e2d40; border-radius: 6px;
+      color: var(--text); font-size: .7rem; padding: .22rem .5rem;
+      cursor: pointer; transition: background .15s; white-space: nowrap;
+    }
+    .pres-btn:hover { background: #1c2e46; }
+
+    #pres-nav {
+      position: fixed; bottom: 0; left: 0; right: 0; height: 44px; z-index: 300;
+      background: rgba(7,9,15,.96); backdrop-filter: blur(10px);
+      border-top: 1px solid #111a28;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0 .8rem; gap: .5rem;
+    }
+    .pres-nav-btn {
+      background: transparent; border: 1px solid #1e2d40; border-radius: 7px;
+      color: var(--text); font-size: .8rem; padding: .26rem .8rem;
+      cursor: pointer; transition: background .15s; white-space: nowrap;
+    }
+    .pres-nav-btn:hover { background: #131c2c; }
+    .pres-nav-btn:disabled { opacity: .25; cursor: default; }
+    #pres-dots { flex: 1; display: flex; align-items: center; justify-content: center; gap: .35rem; overflow: hidden; }
+    .pres-dot { width: 7px; height: 7px; border-radius: 50%; background: #25354a; cursor: pointer; flex-shrink: 0; transition: background .18s, transform .18s; }
+    .pres-dot.active { background: var(--accent); transform: scale(1.4); }
+
+    /* ── Stage ── */
+    #pres-stage {
+      position: fixed; top: 42px; left: 0; right: 0; bottom: 44px;
+      background: var(--stage); overflow: hidden;
+      /* No flex centering — JS translate handles precise centering */
+    }
+
+    /* ── Canvas: physical size (CANVAS_W×scale), JS centers with left/top — NO CSS transform ── */
+    #pres-canvas {
+      position: absolute;
+      background: var(--bg);
+      box-shadow: 0 12px 48px rgba(0,0,0,.7);
+      border: 1px solid #141e2e;
+      overflow: hidden;
+    }
+
+    /* ── Slide wrapper ── */
+    /* No transform on slides — CSS transform breaks Plotly 3D WebGL mouse events */
+    .pres-slide {
+      position: absolute; inset: 0;
+      opacity: 0; pointer-events: none;
+      transition: opacity .3s ease;
+    }
+    .pres-slide.active { opacity: 1; pointer-events: auto; }
+    .pres-slide.exit-l { opacity: 0; transition: opacity .25s; }
+    .pres-slide.exit-r { opacity: 0; transition: opacity .25s; }
+
+    /* ── Slide elements (element-based model) ── */
+    .pse-el { position: absolute; box-sizing: border-box; overflow: hidden; }
+    .pse-text-inner { width: 100%; height: 100%; overflow: hidden; white-space: pre-wrap; word-break: break-word; }
+
+    /* ── Legacy type-based fallback styles ── */
+    .ps-hdr { padding: 22px 48px 14px; flex-shrink: 0; border-bottom: 1px solid #192235; }
+    .ps-hdr-title { font-size: 26px; font-weight: 700; color: var(--text); line-height: 1.25; }
+    .ps-hdr-sub   { font-size: 14px; color: var(--text2); margin-top: 4px; }
+    .ps-title-slide {
+      position: absolute; inset: 0; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: 18px;
+      text-align: center; padding: 60px 80px;
+      background: radial-gradient(ellipse at 50% 38%, #0c1c36 0%, var(--bg) 72%);
+    }
+    .ps-title-main { font-size: 52px; font-weight: 800; color: var(--text); line-height: 1.2; }
+    .ps-title-main span { color: var(--accent); }
+    .ps-title-sub  { font-size: 22px; color: var(--text2); font-weight: 400; max-width: 800px; }
+    .ps-title-author { margin-top: 8px; font-size: 15px; color: #4a6080; border-top: 1px solid #1a2840; padding-top: 14px; width: 100%; }
+    .ps-title-deco  { width: 72px; height: 5px; background: linear-gradient(90deg, var(--accent), #8b5cf6); border-radius: 4px; }
+    .ps-text-slide  { position: absolute; inset: 0; display: flex; flex-direction: column; padding: 20px 48px 28px; overflow: hidden; }
+    .ps-text-body   { font-size: 22px; color: var(--text); line-height: 1.9; overflow: auto; flex: 1; }
+    .ps-text-body li { margin-left: 28px; margin-bottom: 6px; }
+    .ps-body { position: absolute; inset: 0; overflow: hidden; }
+    .ps-map-container { width: 100%; height: 100%; }
+    .ps-stattable-wrap { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; padding: 20px; }
+    .ps-stattable { border-collapse: collapse; min-width: 480px; font-size: 17px; }
+    .ps-stattable th, .ps-stattable td { padding: 11px 22px; border: 1px solid #1e2d40; text-align: left; }
+    .ps-stattable th { background: #0e1928; color: var(--accent2); font-weight: 600; }
+    .ps-stattable tr:nth-child(even) td { background: #0c1620; }
+    .ps-stattable td:last-child { color: var(--accent); font-weight: 600; text-align: right; }
+
+    /* ── Loading ── */
+    .ps-loading {
+      position: absolute; inset: 0; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: 12px;
+      background: var(--bg); z-index: 10;
+    }
+    .ps-spinner { width: 36px; height: 36px; border-radius: 50%; border: 3px solid var(--bg-card); border-top-color: var(--accent); animation: pspin .8s linear infinite; }
+    @keyframes pspin { to { transform: rotate(360deg); } }
+    .ps-loading-lbl { font-size: 13px; color: var(--text2); }
+    .ps-nodata { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; gap: 10px; color: var(--text2); font-size: 16px; }
+    .ps-nodata-icon { font-size: 40px; opacity: .3; }
+
+    /* ── Leaflet ── */
+    .leaflet-container { background: #090e1a; }
+    .leaflet-tile { filter: brightness(.68) saturate(.45); }
+    .leaflet-control-attribution { background: rgba(0,0,0,.5)!important; color: #4a5568!important; font-size: 9px!important; }
+    .leaflet-control-attribution a { color: #4a5568!important; }
+
+    /* ── Fullscreen ── */
+    :fullscreen #pres-stage { top: 0; bottom: 0; }
+    :fullscreen #pres-topbar, :fullscreen #pres-nav { display: none; }
+
+    #pres-slide-badge {
+      position: absolute; bottom: 12px; right: 18px; z-index: 200;
+      font-size: 12px; color: #2a3a52; font-variant-numeric: tabular-nums; pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+
+<div id="pres-topbar">
+  <span class="pres-logo">Seis<span>Work</span></span>
+  <span id="pres-title-bar">–</span>
+  <span id="pres-author-bar"></span>
+  <div class="pt-right">
+    <span id="pres-counter">– / –</span>
+    <button class="pres-btn" onclick="presZoom(+0.1)">＋</button>
+    <button class="pres-btn" onclick="presZoom(-0.1)">－</button>
+    <button class="pres-btn" onclick="presFitScale()">Fit</button>
+    <button class="pres-btn" onclick="presFullscreen()">⛶ Fullscreen</button>
+    <button class="pres-btn" onclick="window.close()">✕</button>
+  </div>
+</div>
+
+<div id="pres-stage">
+  <div id="pres-canvas">
+    <div id="pres-slide-badge"></div>
+  </div>
+</div>
+
+<div id="pres-nav">
+  <button class="pres-nav-btn" id="pres-prev" onclick="presGo(-1)">‹ Prev</button>
+  <div id="pres-dots"></div>
+  <button class="pres-nav-btn" id="pres-next" onclick="presGo(+1)">Next ›</button>
+</div>
+
+<script>
+/* jshint esversion:11 */
+const CFG_ID = "{{ cfg_id }}";
+
+const _RATIO_SIZES = { '16:9':[1280,720], '4:3':[1024,768], 'A4':[1123,794] };
+const _urlRatio    = new URLSearchParams(location.search).get('ratio') || '16:9';
+const [CANVAS_W, CANVAS_H] = _RATIO_SIZES[_urlRatio] || [1280, 720];
+
+/* ── State ── */
+let _slides       = [];
+let _cur          = 0;
+let _scale        = 1;
+let _manualScale  = null;
+let _leafletMaps  = {};   // key → L.Map
+let _plotlyInited = {};   // key → bool
+let _plotlyP      = null;
+let _catData      = null;
+let _catCBs       = [];
+
+// ── 3D Portal cache: keyed "slideIdx-elId" → {wrapper, plotDiv, logX,logY,logW,logH}
+// Portals are hidden on slide change and shown on return — never destroyed unless needed
+const _portals = {};
+
+function _portalPos(filterSlide) {
+  const stage  = document.getElementById('pres-stage');
+  const canvas = document.getElementById('pres-canvas');
+  if (!stage || !canvas) return;
+  const sr = stage.getBoundingClientRect();
+  const cL = parseInt(canvas.style.left) || 0;
+  const cT = parseInt(canvas.style.top)  || 0;
+  for (const [key, p] of Object.entries(_portals)) {
+    const si = parseInt(key.split('-')[0]);
+    if (filterSlide !== undefined && si !== filterSlide) continue;
+    const px = cL + Math.round(p.logX * _scale);
+    const py = cT + Math.round(p.logY * _scale);
+    const pw = Math.round(p.logW * _scale);
+    const ph = Math.round(p.logH * _scale);
+    p.wrapper.style.left   = (sr.left + px) + 'px';
+    p.wrapper.style.top    = (sr.top  + py) + 'px';
+    p.wrapper.style.width  = pw + 'px';
+    p.wrapper.style.height = ph + 'px';
+    if (window.Plotly && p.plotDiv.children.length) {
+      try {
+        Plotly.relayout(p.plotDiv, {width:pw, height:ph});
+        if (p.layout) { p.layout.width = pw; p.layout.height = ph; p.pW = pw; p.pH = ph; }
+      } catch(_) {}
+    }
+  }
+}
+
+function _portalHideSlide(slideIdx) {
+  for (const [key, p] of Object.entries(_portals)) {
+    if (parseInt(key.split('-')[0]) === slideIdx) p.wrapper.style.display = 'none';
+  }
+}
+
+function _portalShowSlide(slideIdx) {
+  for (const [key, p] of Object.entries(_portals)) {
+    if (parseInt(key.split('-')[0]) === slideIdx) p.wrapper.style.display = '';
+  }
+  _portalPos(slideIdx);
+}
+
+function _portalDestroyKey(key) {
+  const p = _portals[key]; if (!p) return;
+  if (window.Plotly) try { Plotly.purge(p.plotDiv); } catch(_) {}
+  p.wrapper.remove();
+  delete _portals[key];
+}
+
+// ── Map overlay helpers (identical to seiswork.js) ────────────────────────────
+const _FPRES_STYLE = {
+  'Sesar Geser':        '#f59e0b', 'Sesar Geser Symbol': '#f59e0b',
+  'Sesar Naik':         '#ef4444', 'Sesar Naik Sysmbol': '#ef4444',
+  'Sesar Turun':        '#60a5fa', 'Sesar Turun Sysmbol':'#60a5fa',
+};
+const _FPRES_DEFAULT = '#a78bfa';
+let _ovs = null;
+
+async function _ensureOverlays() {
+  if (_ovs) return _ovs;
+  const ov = { faults:[], volcanoes:[], coast:[] };
+  try {
+    const fd = await (await fetch('/footages/indogigis.geojson')).json();
+    (fd.features||[]).forEach(f => {
+      if (f.geometry?.type === 'LineString') ov.faults.push({
+        lons: f.geometry.coordinates.map(c=>c[0]),
+        lats: f.geometry.coordinates.map(c=>c[1]),
+        color: _FPRES_STYLE[f.properties?.tipe||''] || _FPRES_DEFAULT,
+      });
+    });
+  } catch(_) {}
+  try {
+    const vd = await (await fetch('/footages/Volcano.geojson')).json();
+    (vd.features||[]).forEach(f => {
+      if (f.geometry?.type === 'Point') {
+        const c = f.geometry.coordinates;
+        ov.volcanoes.push({ lon:c[0], lat:c[1], name:f.properties?.name||'' });
+      }
+    });
+  } catch(_) {}
+  try {
+    const W=Math.min(...[124,125,126,127,128,129,130,131,132]);
+    const cd = await (await fetch('/api/footages/coastlines?lon_min=124&lat_min=-3&lon_max=132&lat_max=5')).json();
+    if (cd.lines) ov.coast = cd.lines;
+  } catch(_) {}
+  _ovs = ov;
+  return ov;
+}
+
+const _inB = (lo,la,b) => lo>=b.W&&lo<=b.E&&la>=b.S&&la<=b.N;
+const _segTouchB = (ls,lt,b) => ls.some((lo,i)=>_inB(lo,lt[i],b));
+
+function _pres3dBounds(lons, lats, pad=0.4) {
+  return { W:Math.min(...lons)-pad, E:Math.max(...lons)+pad,
+           S:Math.min(...lats)-pad, N:Math.max(...lats)+pad };
+}
+
+function _pres3dAspect(b, depMax) {
+  const midLat = (b.S+b.N)/2;
+  const kmLon = Math.max(1e-3, (b.E-b.W) * 111.32 * Math.cos(midLat*Math.PI/180));
+  const kmLat = Math.max(1e-3, (b.N-b.S) * 110.57);
+  const h = Math.max(kmLon, kmLat);
+  return { x:kmLon/h, y:kmLat/h, z:Math.min(Math.max(1e-3,depMax)/h, 0.5) };
+}
+
+function _pres3dCoastTrace(ov, b) {
+  if (!ov.coast?.length) return null;
+  const x=[],y=[],z=[];
+  for (const seg of ov.coast) {
+    const touch = seg.some(([lo,la])=>_inB(lo,la,b));
+    if (!touch) continue;
+    for (const [lo,la] of seg) { x.push(lo); y.push(la); z.push(0); }
+    x.push(null); y.push(null); z.push(null);
+  }
+  if (!x.length) return null;
+  return { type:'scatter3d', mode:'lines', x, y, z,
+           line:{color:'#38bdf8',width:1.5}, hoverinfo:'skip', name:'Coastline' };
+}
+
+function _pres3dFaultTraces(ov, b) {
+  if (!ov.faults?.length) return [];
+  const groups = {};
+  for (const seg of ov.faults) {
+    if (!_segTouchB(seg.lons,seg.lats,b)) continue;
+    const g = (groups[seg.color]||={lo:[],la:[]});
+    seg.lons.forEach((lo,i)=>{ g.lo.push(lo); g.la.push(seg.lats[i]); });
+    g.lo.push(null); g.la.push(null);
+  }
+  return Object.entries(groups).map(([color,g],i) => ({
+    type:'scatter3d', mode:'lines', x:g.lo, y:g.la, z:g.lo.map(v=>v==null?null:0),
+    line:{color,width:2}, hoverinfo:'skip', name:i===0?'Sesar':'', showlegend:i===0,
+  }));
+}
+
+function _pres3dVolcTraces(ov, b) {
+  const vs = (ov.volcanoes||[]).filter(v=>_inB(v.lon,v.lat,b));
+  if (!vs.length) return [];
+  return [{ type:'scatter3d', mode:'text',
+    x:vs.map(v=>v.lon), y:vs.map(v=>v.lat), z:vs.map(()=>0),
+    text:vs.map(()=>'🌋'), textfont:{size:13},
+    hovertext:vs.map(v=>'Gunung '+v.name), hoverinfo:'text', name:'Gunung api' }];
+}
+
+// ── Slab2 + topography for the 3D presentation ────────────────────────────────
+const _PRES3D_SLABCS = [
+  [0,'rgb(0,100,200)'],[0.1,'rgb(0,160,220)'],[0.25,'rgb(0,200,180)'],
+  [0.4,'rgb(100,220,100)'],[0.55,'rgb(220,200,0)'],[0.7,'rgb(220,130,0)'],
+  [0.85,'rgb(200,60,0)'],[1.0,'rgb(159,18,57)'],
+];
+
+async function _pres3dFetchSlab(b) {
+  const r = await fetch(`/api/slab?lon_min=${b.W}&lat_min=${b.S}&lon_max=${b.E}&lat_max=${b.N}`);
+  const d = await r.json();
+  if (!d.features?.length) return null;
+  return d;
+}
+
+async function _pres3dFetchTopo(b) {
+  const r = await fetch(`/api/topo/grid?lon_min=${b.W}&lat_min=${b.S}&lon_max=${b.E}&lat_max=${b.N}&G=16`);
+  const d = await r.json();
+  if (!d.lons || !d.lats || !d.elev) return null;
+  const elev = d.elev.map(row => row.map(v => Math.max(0, v) / 1000));
+  let peak = 0;
+  for (const row of elev) for (const v of row) if (v > peak) peak = v;
+  return { lons: d.lons, lats: d.lats, elev, peak };
+}
+
+function _pres3dSlabTraces(slabData, depMax) {
+  const pLo=[],pLa=[],pDep=[];
+  for (const f of slabData.features) {
+    const dep = -f.properties.ELEV;
+    if (dep > depMax + 80) continue;
+    for (const [lo,la] of f.geometry.coordinates) { pLo.push(lo); pLa.push(la); pDep.push(dep); }
+  }
+  const n = pLo.length; if (n < 4) return [];
+  const loMn=Math.min(...pLo),loMx=Math.max(...pLo),laMn=Math.min(...pLa),laMx=Math.max(...pLa);
+  const NG=56,dLo=(loMx-loMn)/(NG-1)||1e-6,dLa=(laMx-laMn)/(NG-1)||1e-6;
+  const md2=(Math.hypot(dLo,dLa)*2.4)**2;
+  const gLons=Array.from({length:NG},(_,j)=>loMn+j*dLo);
+  const gLats=Array.from({length:NG},(_,i)=>laMn+i*dLa);
+  const gZ=Array.from({length:NG},()=>new Array(NG).fill(null));
+  for (let i=0;i<NG;i++) { const la=gLats[i];
+    for (let j=0;j<NG;j++) { const lo=gLons[j];
+      let ws=0,zs=0,n2=Infinity,ex=-1;
+      for (let k=0;k<n;k++) { const dx=lo-pLo[k],dy=la-pLa[k],d2=dx*dx+dy*dy;
+        if(d2<n2)n2=d2; if(d2<1e-10){ex=k;break;} const w=1/d2;ws+=w;zs+=w*pDep[k]; }
+      if(n2<=md2) gZ[i][j]=ex>=0?pDep[ex]:zs/ws;
+    }
+  }
+  if (!gZ.some(r=>r.some(v=>v!==null))) return [];
+  const cs=depMax<=60?10:depMax<=150?25:50, depMn=Math.min(...pDep);
+  return [{ type:'surface', x:gLons, y:gLats, z:gZ,
+    colorscale:_PRES3D_SLABCS, cmin:0, cmax:Math.min(400,depMax),
+    showscale:false, opacity:0.65,
+    contours:{z:{show:true,start:Math.floor(depMn/cs)*cs,end:depMax+cs,
+                 size:cs,color:'rgba(255,255,255,0.45)',width:1.5,usecolormap:false}},
+    lighting:{diffuse:.55,specular:.12,roughness:.8,ambient:.7},
+    name:'Slab', showlegend:false, hovertemplate:'Slab %{z:.0f} km<extra></extra>' }];
+}
+
+function _pres3dTopoTraces(topoData, depMax) {
+  if (!topoData) return [];
+  const pk = topoData.peak||1;
+  const ex = Math.max(0.01*depMax/pk, Math.min(40, 0.03*depMax/pk));
+  const z  = topoData.elev.map(row=>row.map(e=>-e*ex));
+  return [{ type:'surface', x:topoData.lons, y:topoData.lats, z,
+    colorscale:[[0,'var(--border)'],[0.5,'#3f6212'],[0.8,'#a16207'],[1,'#e7e5e4']],
+    reversescale:false, showscale:false, opacity:0.5,
+    hovertemplate:'Topo %{customdata:.0f} m<extra></extra>',
+    customdata:topoData.elev.map(row=>row.map(e=>Math.round(e*1000))),
+    lighting:{ambient:.8,diffuse:.5}, name:'Topography', showlegend:false }];
+}
+
+async function _pres3dToggle(portalKey, type, checked) {
+  const p = _portals[portalKey]; if (!p) return;
+  const ckSlab = p.wrapper.querySelector('.ck-slab');
+  const ckTopo = p.wrapper.querySelector('.ck-topo');
+  const lbl    = p.wrapper.querySelector('.pres3d-loading');
+
+  if (type === 'slab') {
+    p.showSlab = checked;
+    if (checked && p.slabData === null) {
+      if (lbl) lbl.textContent = 'Loading slab…';
+      try { p.slabData = await _pres3dFetchSlab(p.b); } catch(_) { p.slabData = false; }
+      if (lbl) lbl.textContent = '';
+    }
+  } else {
+    p.showTopo = checked;
+    if (checked && p.topoData === null) {
+      if (lbl) lbl.textContent = 'Loading topography…';
+      try { p.topoData = await _pres3dFetchTopo(p.b); } catch(_) { p.topoData = false; }
+      if (lbl) lbl.textContent = '';
+    }
+  }
+
+  // Topo at the bottom (first index), events + overlays on top
+  const traces = [
+    ...(p.showTopo && p.topoData ? _pres3dTopoTraces(p.topoData, p.depMax) : []),
+    ...p.baseTraces,
+    ...(p.showSlab && p.slabData ? _pres3dSlabTraces(p.slabData, p.depMax) : []),
+  ];
+  try { Plotly.react(p.plotDiv, traces, p.layout, {responsive:false,displayModeBar:false}); } catch(_) {}
+}
+
+/* ── Plotly lazy ── */
+function _ensurePlotly() {
+  if (window.Plotly) return Promise.resolve();
+  if (_plotlyP) return _plotlyP;
+  _plotlyP = new Promise((res,rej) => {
+    const s = document.createElement('script');
+    s.src = '/static/js/vendor/plotly-2.35.2.min.js';
+    s.onload = res; s.onerror = rej;
+    document.head.appendChild(s);
+  });
+  return _plotlyP;
+}
+
+/* ── Scale: physical sizing, no CSS transform → Plotly 3D fully interactive ── */
+function presFitScale()  { _manualScale = null; _applyScale(); }
+function presZoom(delta) {
+  _manualScale = Math.max(0.15, Math.min(3, (_manualScale ?? _scale) + delta));
+  _applyScale();
+}
+
+function _applyScale() {
+  const stage  = document.getElementById('pres-stage');
+  const canvas = document.getElementById('pres-canvas');
+  if (!stage || !canvas) return;
+
+  const fit = Math.min((stage.clientWidth - 40) / CANVAS_W, (stage.clientHeight - 32) / CANVAS_H);
+  _scale = _manualScale ?? fit;
+
+  const cW = Math.round(CANVAS_W * _scale);
+  const cH = Math.round(CANVAS_H * _scale);
+  canvas.style.width  = cW + 'px';
+  canvas.style.height = cH + 'px';
+  canvas.style.left   = Math.round((stage.clientWidth  - cW) / 2) + 'px';
+  canvas.style.top    = Math.round((stage.clientHeight - cH) / 2) + 'px';
+  canvas.style.transform = '';
+
+  _rescaleElements();
+  _portalPos(); // reposition all 3D portals after the scale changes
+}
+
+function _rescaleElements() {
+  const s = _scale;
+  _slides.forEach((sl, si) => {
+    (sl.elements || []).forEach(el => {
+      const div = document.getElementById(`pse-${si}-${el.id}`);
+      if (!div) return;
+      div.style.left   = Math.round(el.x * s) + 'px';
+      div.style.top    = Math.round(el.y * s) + 'px';
+      div.style.width  = Math.round(el.w * s) + 'px';
+      div.style.height = Math.round(el.h * s) + 'px';
+      // Scale text
+      if (el.type === 'text') {
+        const inner = div.querySelector('.pse-text-inner');
+        if (inner) {
+          inner.style.fontSize   = Math.round((el.fontSize   || 20) * s) + 'px';
+          inner.style.lineHeight = (el.lineHeight || 1.6);
+          inner.style.padding    = Math.round(4 * s) + 'px';
+        }
+      }
+    });
+  });
+  // Invalidate Leaflet maps
+  Object.entries(_leafletMaps).forEach(([k, m]) => {
+    try { m.invalidateSize(); } catch (_) {}
+  });
+  // Relayout Plotly charts
+  if (window.Plotly) {
+    document.querySelectorAll('[data-plotly-container]').forEach(el => {
+      try { Plotly.relayout(el, {}); } catch (_) {}
+    });
+  }
+}
+
+/* ── Init ── */
+async function presInit() {
+  _applyScale();
+  window.addEventListener('resize', () => _applyScale());
+
+  let pres;
+  try {
+    const r = await fetch(`/api/present/${CFG_ID}`);
+    if (!r.ok) throw new Error('Config not found');
+    pres = await r.json();
+  } catch(e) { _showErr(e.message); return; }
+
+  _slides = (pres.slides || []).map(_migrateSl);
+  document.getElementById('pres-title-bar').textContent  = pres.title  || 'SeisWork Presentation';
+  document.getElementById('pres-author-bar').textContent = pres.author ? '· ' + pres.author : '';
+  document.title = pres.title || 'SeisWork Presentation';
+
+  if (!_slides.length) { _showErr('No slides yet. Create some first in the Presentation Builder.'); return; }
+
+  _buildDeck();
+  _goTo(0, 'none');
+
+  // Pre-warm Plotly if needed
+  const needP = _slides.some(sl => (sl.elements||[]).some(e => ['map_3d','histogram'].includes(e.type)));
+  if (needP) _ensurePlotly().catch(()=>{});
+}
+
+function _showErr(msg) {
+  document.getElementById('pres-canvas').innerHTML =
+    `<div class="ps-nodata" style="height:100%"><div class="ps-nodata-icon">⚠</div><div>${_esc(msg)}</div></div>`;
+}
+
+/* ── Migrate legacy type-based slide → element-based ── */
+function _migrateSl(sl) {
+  if (sl.elements) return sl;
+  const uid = () => `el-${Date.now()}-${Math.random().toString(36).slice(2,6)}`;
+  const W = CANVAS_W, H = CANVAS_H;
+  const els = [];
+  const hdr = (txt, y=20, fs=28) => ({ id:uid(), type:'text', x:40, y, w:W-80, h:fs*2.4,
+    content:txt, fontSize:fs, fontWeight:'700', color:'var(--text-main)', textAlign:'left', lineHeight:1.25 });
+  switch (sl.type) {
+    case 'title':
+      els.push({ id:uid(), type:'text', x:80, y:Math.round(H/2)-100, w:W-160, h:200,
+        content:sl.title||'Judul', fontSize:52, fontWeight:'800', color:'var(--text-main)', textAlign:'center', lineHeight:1.2 });
+      if (sl.subtitle) els.push({ id:uid(), type:'text', x:80, y:Math.round(H/2)+110, w:W-160, h:80,
+        content:sl.subtitle, fontSize:22, fontWeight:'400', color:'var(--text-muted)', textAlign:'center', lineHeight:1.4 });
+      if (sl.author) els.push({ id:uid(), type:'text', x:80, y:H-60, w:W-160, h:40,
+        content:sl.author, fontSize:15, fontWeight:'400', color:'#4a6080', textAlign:'center', lineHeight:1.4 });
+      break;
+    case 'text':
+      els.push(hdr(sl.title||'', 20, 28));
+      els.push({ id:uid(), type:'text', x:48, y:90, w:W-96, h:H-110,
+        content:sl.body||'', fontSize:20, fontWeight:'400', color:'var(--text-main)', textAlign:'left', lineHeight:1.8 });
+      break;
+    case 'map_2d':
+      els.push(hdr(sl.title||'Peta 2D', 14, 26));
+      els.push({ id:uid(), type:'map_2d', x:10, y:72, w:W-20, h:H-82, job_id:sl.job_id||'', zoom:sl.zoom||7 });
+      break;
+    case 'map_3d':
+      els.push(hdr(sl.title||'Peta 3D', 14, 26));
+      els.push({ id:uid(), type:'map_3d', x:10, y:72, w:W-20, h:H-82, job_id:sl.job_id||'' });
+      break;
+    case 'histogram':
+      els.push(hdr(sl.title||'Histogram', 14, 26));
+      els.push({ id:uid(), type:'histogram', x:10, y:72, w:W-20, h:H-82, job_id:sl.job_id||'', field:sl.field||'magnitude' });
+      break;
+    case 'stat_table':
+      els.push(hdr(sl.title||'Statistik', 14, 26));
+      els.push({ id:uid(), type:'stat_table', x:10, y:72, w:W-20, h:H-82, job_id:sl.job_id||'' });
+      break;
+    case 'split':
+      els.push(hdr(sl.title||'', 14, 26));
+      els.push({ id:uid(), type:(sl.left?.type||'map_2d'),    x:10, y:72, w:Math.round(W/2)-15, h:H-82, job_id:sl.job_id||'' });
+      els.push({ id:uid(), type:(sl.right?.type||'histogram'), x:Math.round(W/2)+5, y:72, w:Math.round(W/2)-15, h:H-82, job_id:sl.job_id||'', field:sl.right?.field||'magnitude' });
+      break;
+    default:
+      els.push({ id:uid(), type:'text', x:80, y:Math.round(H/2)-40, w:W-160, h:80,
+        content:sl.title||'Slide', fontSize:36, fontWeight:'700', color:'var(--text-main)', textAlign:'center', lineHeight:1.3 });
+  }
+  return { id: sl.id||uid(), bg: sl.bg||'', elements: els };
+}
+
+/* ── Catalog lazy ── */
+function _getCatalog() {
+  if (_catData && _catData !== false) return Promise.resolve(_catData);
+  if (_catData === false) return new Promise(r => _catCBs.push(r));
+  _catData = false;
+  return new Promise(r => {
+    _catCBs.push(r);
+    fetch(`/api/result/${CFG_ID}/catalog`)
+      .then(res => res.ok ? res.json() : null)
+      .then(d => { _catData = d||{jobs:[]}; _catCBs.forEach(cb=>cb(_catData)); _catCBs=[]; })
+      .catch(()=> { _catData={jobs:[]}; _catCBs.forEach(cb=>cb(_catData)); _catCBs=[]; });
+  });
+}
+
+/* ── Build DOM ── */
+function _buildDeck() {
+  const canvas = document.getElementById('pres-canvas');
+  const badge  = document.getElementById('pres-slide-badge');
+  canvas.innerHTML = '';
+  canvas.appendChild(badge);
+
+  const dots = document.getElementById('pres-dots');
+  dots.innerHTML = '';
+
+  _slides.forEach((sl, i) => {
+    const div = document.createElement('div');
+    div.className = 'pres-slide';
+    div.id = `slide-${i}`;
+    div.style.background = sl.bg || 'var(--bg-panel)';
+    canvas.appendChild(div);
+
+    // Render elements — positions at physical scale (no CSS transform)
+    (sl.elements||[]).forEach(el => {
+      const e = document.createElement('div');
+      e.className = 'pse-el';
+      e.id = `pse-${i}-${el.id}`;
+      const s = _scale;
+      e.style.cssText = `left:${Math.round(el.x*s)}px;top:${Math.round(el.y*s)}px;width:${Math.round(el.w*s)}px;height:${Math.round(el.h*s)}px;`;
+      if (el.type === 'text') {
+        _renderTextEl(e, el);
+      } else if (el.type === 'shape') {
+        e.style.background   = el.fill || 'rgba(59,130,246,.15)';
+        e.style.border       = `${Math.max(1,Math.round((el.borderW||2)*s))}px solid ${el.borderColor||'#3b82f6'}`;
+        e.style.borderRadius = Math.round((el.radius||0)*s) + 'px';
+      }
+      // data types: render on activate
+      div.appendChild(e);
+    });
+
+    const dot = document.createElement('div');
+    dot.className = 'pres-dot';
+    dot.onclick = () => _goTo(i);
+    dots.appendChild(dot);
+  });
+  _updateChrome();
+}
+
+function _renderTextEl(e, el) {
+  const inner = document.createElement('div');
+  inner.className = 'pse-text-inner';
+  const s = _scale;
+  inner.style.cssText = `font-size:${Math.round((el.fontSize||20)*s)}px;font-weight:${el.fontWeight||'400'};color:${el.color||'var(--text-main)'};text-align:${el.textAlign||'left'};line-height:${el.lineHeight||1.6};padding:${Math.round(4*s)}px;`;
+  inner.textContent = el.content || '';
+  e.appendChild(inner);
+}
+
+/* ── Navigation ── */
+function presGo(dir) { _goTo(_cur + dir); }
+
+function _goTo(idx, dir) {
+  if (idx < 0 || idx >= _slides.length) return;
+  if (dir === undefined) dir = idx >= _cur ? 'fwd' : 'bwd';
+  if (idx !== _cur) {
+    _portalHideSlide(_cur);  // hide the portals of the slide being left
+  }
+  if (dir !== 'none' && idx !== _cur) {
+    const old = document.getElementById(`slide-${_cur}`);
+    if (old) {
+      old.classList.add(idx > _cur ? 'exit-l' : 'exit-r');
+      setTimeout(() => old && old.classList.remove('active','exit-l','exit-r'), 300);
+    }
+  }
+  _cur = idx;
+  _activateSlide(idx);
+  _updateChrome();
+}
+
+function _activateSlide(idx) {
+  const el = document.getElementById(`slide-${idx}`);
+  if (!el) return;
+  el.classList.add('active');
+
+  const sl = _slides[idx];
+  if (!sl) return;
+  const hasData = (sl.elements||[]).some(e => ['map_2d','map_3d','histogram','stat_table'].includes(e.type));
+  if (!hasData) return;
+
+  const key = `data-${idx}`;
+  if (_plotlyInited[key]) {
+    // Already rendered before — show the cached portals again
+    _portalShowSlide(idx);
+    (sl.elements||[]).forEach(e => {
+      if (e.type === 'map_2d' && _leafletMaps[`${idx}-${e.id}`])
+        setTimeout(() => _leafletMaps[`${idx}-${e.id}`].invalidateSize(), 120);
+    });
+    return;
+  }
+  _plotlyInited[key] = true;
+
+  // Show loading overlay on data elements
+  (sl.elements||[]).forEach(e => {
+    if (!['map_2d','map_3d','histogram','stat_table'].includes(e.type)) return;
+    const div = document.getElementById(`pse-${idx}-${e.id}`);
+    if (div) div.innerHTML = `<div class="ps-loading"><div class="ps-spinner"></div><div class="ps-loading-lbl">Loading…</div></div>`;
+  });
+
+  _getCatalog().then(cat => _renderSlideData(idx, sl, cat));
+}
+
+async function _renderSlideData(idx, sl, cat) {
+  const dataEls = (sl.elements||[]).filter(e => ['map_2d','map_3d','histogram','stat_table'].includes(e.type));
+  const needsPlotly = dataEls.some(e => ['map_3d','histogram'].includes(e.type));
+  if (needsPlotly) { try { await _ensurePlotly(); } catch(_) {} }
+
+  for (const el of dataEls) {
+    const div = document.getElementById(`pse-${idx}-${el.id}`);
+    if (!div) continue;
+    div.innerHTML = '';
+    const evs = _getEvs(el, cat);
+
+    if (el.type === 'map_2d') {
+      const job = (cat?.jobs||[]).find(j=>j.job_id===el.job_id);
+      const srcTag = job ? `[${job.step||'?'}${job.method?'/'+job.method:''}] ${evs.length} ev` : `${evs.length} ev`;
+      // Source badge (top-left, above map)
+      const badge = document.createElement('div');
+      badge.style.cssText = 'position:absolute;top:4px;left:4px;z-index:500;background:rgba(10,16,28,.8);color:#60a5fa;font-size:10px;padding:2px 6px;border-radius:3px;pointer-events:none';
+      badge.textContent = srcTag;
+      div.appendChild(badge);
+
+      // absolute inset ensures Leaflet gets correct pixel dimensions
+      const mapDiv = document.createElement('div');
+      mapDiv.style.cssText = 'position:absolute;inset:0;';
+      div.appendChild(mapDiv);
+      const map = L.map(mapDiv, { zoomControl: true });
+      // Use local tile proxy — Flask fetches CartoDB server-side, avoids browser network restriction
+      L.tileLayer('/tiles/{z}/{x}/{y}.png',
+        { attribution:'©CartoDB (via SeisWork proxy)', maxZoom:18 }
+      ).addTo(map);
+      _leafletMaps[`${idx}-${el.id}`] = map;
+      if (evs && evs.length) {
+        const lats=evs.map(e=>+e.lat), lons=evs.map(e=>+e.lon);
+        map.setView([(Math.min(...lats)+Math.max(...lats))/2,(Math.min(...lons)+Math.max(...lons))/2], el.zoom||7);
+        evs.forEach(e => {
+          const m=+(e.mag??2), d=+(e.depth_km??e.depth??10);
+          L.circleMarker([+e.lat,+e.lon],{radius:Math.max(3,Math.min(16,3+m*2.2)),fillColor:_depCol(d),color:'#fff',weight:.4,fillOpacity:.75})
+           .bindPopup(`<b>${e.event_id||''}</b><br>M${isNaN(m)?'–':m.toFixed(1)} · D${d.toFixed(1)} km`)
+           .addTo(map);
+        });
+        const legend = L.control({position:'bottomright'});
+        legend.onAdd = () => {
+          const d=L.DomUtil.create('div');
+          d.style.cssText='background:rgba(10,16,28,.88);color:var(--text-main);padding:6px 10px;border-radius:6px;font-size:10px;line-height:1.65';
+          d.innerHTML='<b>Kedalaman</b><br><span style="color:#22c55e">■</span> 0–15 <span style="color:#3b82f6">■</span> 15–40 <span style="color:#a855f7">■</span> 40–70 <span style="color:#ef4444">■</span> &gt;70 km';
+          return d;
+        };
+        legend.addTo(map);
+      } else { map.setView([0,128],5); }
+      setTimeout(()=>map.invalidateSize(),100);
+
+    } else if (el.type === 'map_3d') {
+      if (!window.Plotly) continue;
+      if (!evs||!evs.length) {
+        div.innerHTML='<div class="ps-nodata" style="height:100%"><div class="ps-nodata-icon">📭</div><div>No data</div></div>';
+        continue;
+      }
+      const job3d = (cat?.jobs||[]).find(j=>j.job_id===el.job_id);
+      const src3d = job3d?`[${job3d.step||'?'}${job3d.method?'/'+job3d.method:''}] ${evs.length} ev`:`${evs.length} ev`;
+
+      div.innerHTML = '';  // clear loading spinner
+
+      // Create a new portal (or reuse the cached one)
+      const portalKey = `${idx}-${el.id}`;
+      _portalDestroyKey(portalKey);  // clear the old one if present
+
+      const stage   = document.getElementById('pres-stage');
+      const canvas  = document.getElementById('pres-canvas');
+      const cL = parseInt(canvas.style.left) || 0;
+      const cT = parseInt(canvas.style.top)  || 0;
+      const pW = Math.round(el.w * _scale);
+      const pH = Math.round(el.h * _scale);
+      const px = cL + Math.round(el.x * _scale);
+      const py = cT + Math.round(el.y * _scale);
+      const sr = stage.getBoundingClientRect();
+
+      // wrapper: position:fixed to escape the overflow:hidden canvas
+      // Plotly must NOT touch the wrapper — only the plotDiv inside it
+      const wrapper = document.createElement('div');
+      wrapper.style.cssText = `position:fixed;left:${sr.left+px}px;top:${sr.top+py}px;width:${pW}px;height:${pH}px;z-index:9000;background:var(--bg-panel);`;
+      document.body.appendChild(wrapper);
+
+      const plotDiv = document.createElement('div');
+      wrapper.appendChild(plotDiv);
+
+      // Race guard: if the user changed slides before the portal finished, hide immediately
+      if (_cur !== idx) wrapper.style.display = 'none';
+
+      // Data events
+      const lats = evs.map(e=>+e.lat), lons = evs.map(e=>+e.lon);
+      const deps = evs.map(e=>+(e.depth_km??e.depth??0));
+      const mags = evs.map(e=>+(e.mag??2));
+      const depMax = Math.max(1, ...deps.filter(isFinite));
+      const b    = _pres3dBounds(lons, lats);
+
+      // Event markers
+      const evTrace = {
+        type:'scatter3d', mode:'markers', x:lons, y:lats, z:deps.map(d=>-d),
+        marker:{
+          size:mags.map(m=>Math.max(2,Math.min(9,2+m*1.4))),
+          color:deps, colorscale:'Viridis', reversescale:true,
+          colorbar:{title:{text:'km',font:{size:8,color:'var(--text-muted)'}},thickness:8,len:.55,x:1.0,tickfont:{size:7,color:'var(--text-muted)'}},
+          opacity:.85, line:{width:0},
+        },
+        text:evs.map(e=>`M${(+(e.mag??0)).toFixed(1)} D${(+(e.depth_km??0)).toFixed(0)}km`),
+        hoverinfo:'text', name:'Event',
+      };
+
+      // Load overlays (coast + fault + volcano) — same as the result view
+      const ov = await _ensureOverlays().catch(()=>({faults:[],volcanoes:[],coast:[]}));
+      const baseTraces = [evTrace];
+      const ct = _pres3dCoastTrace(ov, b);
+      if (ct) baseTraces.push(ct);
+      _pres3dFaultTraces(ov, b).forEach(t=>baseTraces.push(t));
+      _pres3dVolcTraces(ov, b).forEach(t=>baseTraces.push(t));
+
+      const layout3d = {
+        width: pW, height: pH,
+        paper_bgcolor:'var(--bg-panel)',
+        font:{color:'var(--text-muted)', size:9},
+        scene:{
+          dragmode:'turntable', bgcolor:'var(--bg-panel)',
+          uirevision: portalKey,
+          xaxis:{title:'Longitude', titlefont:{size:9,color:'#64748b'}, gridcolor:'var(--bg-card)', tickfont:{size:7,color:'#64748b'}, range:[b.W,b.E]},
+          yaxis:{title:'Latitude',  titlefont:{size:9,color:'#64748b'}, gridcolor:'var(--bg-card)', tickfont:{size:7,color:'#64748b'}, range:[b.S,b.N]},
+          zaxis:{title:'Depth (km)',titlefont:{size:9,color:'#64748b'}, gridcolor:'var(--bg-card)', tickfont:{size:7,color:'#64748b'},
+                 tickvals:[0,-50,-100,-150,-200], ticktext:['0','50','100','150','200+']},
+          camera:{eye:{x:1.5,y:-1.8,z:0.9}},
+          aspectmode:'manual', aspectratio: _pres3dAspect(b, depMax),
+        },
+        margin:{t:0,b:0,l:0,r:0}, showlegend:true,
+        legend:{x:0,y:1,bgcolor:'rgba(13,22,38,.7)',font:{size:9,color:'#cbd5e1'},bordercolor:'var(--border)',borderwidth:1},
+      };
+
+      _portals[portalKey] = {
+        wrapper, plotDiv, logX:el.x, logY:el.y, logW:el.w, logH:el.h,
+        baseTraces, layout:layout3d, b, depMax, pW, pH,
+        slabData:null, topoData:null, showSlab:false, showTopo:false,
+      };
+
+      try {
+        await Plotly.newPlot(plotDiv, baseTraces, layout3d, {responsive:false, displayModeBar:false});
+
+        // Badge sumber data
+        const b3d = document.createElement('div');
+        b3d.style.cssText='position:absolute;top:4px;left:4px;z-index:200;background:rgba(10,16,28,.8);color:#60a5fa;font-size:10px;padding:2px 6px;border-radius:3px;pointer-events:none';
+        b3d.textContent = src3d;
+        wrapper.appendChild(b3d);
+
+        // Panel checkbox Slab2 + Topografi
+        const panel = document.createElement('div');
+        panel.style.cssText='position:absolute;top:4px;right:4px;z-index:200;background:rgba(10,16,28,.88);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:11px;color:var(--text-main);display:flex;flex-direction:column;gap:5px;';
+        panel.innerHTML = `
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;white-space:nowrap">
+            <input type="checkbox" class="ck-slab" style="accent-color:#60a5fa;width:13px;height:13px"> Slab2
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;white-space:nowrap">
+            <input type="checkbox" class="ck-topo" style="accent-color:#60a5fa;width:13px;height:13px"> Topografi
+          </label>
+          <span class="pres3d-loading" style="font-size:10px;color:var(--text-muted);min-height:14px"></span>`;
+        wrapper.appendChild(panel);
+
+        panel.querySelector('.ck-slab').addEventListener('change', e=>_pres3dToggle(portalKey,'slab',e.target.checked));
+        panel.querySelector('.ck-topo').addEventListener('change', e=>_pres3dToggle(portalKey,'topo',e.target.checked));
+
+      } catch(err) {
+        wrapper.innerHTML = `<div style="padding:20px;color:#f87171;font-size:12px">Error: ${err.message||err}</div>`;
+      }
+
+    } else if (el.type === 'histogram') {
+      if (!window.Plotly) continue;
+      const jobH = (cat?.jobs||[]).find(j=>j.job_id===el.job_id);
+      const srcH = jobH?`[${jobH.step||'?'}${jobH.method?'/'+jobH.method:''}] ${evs.length} ev`:`${evs.length} ev`;
+      const isMag=(el.field||'magnitude')==='magnitude';
+      const vals=isMag?evs.map(e=>+(e.mag??0)).filter(v=>!isNaN(v)&&v>-10):evs.map(e=>+(e.depth_km??e.depth??0)).filter(v=>!isNaN(v));
+      if (!vals.length) { div.innerHTML='<div class="ps-nodata" style="height:100%"><div class="ps-nodata-icon">📭</div><div>No data</div></div>'; continue; }
+      const bH=document.createElement('div');
+      bH.style.cssText='position:absolute;top:4px;left:4px;z-index:10;background:rgba(10,16,28,.8);color:#60a5fa;font-size:10px;padding:2px 6px;border-radius:3px;pointer-events:none';
+      bH.textContent=`${srcH} · ${isMag?'Magnitudo':'Kedalaman'}`; div.appendChild(bH);
+      const pH = document.createElement('div');
+      pH.style.cssText='position:absolute;inset:0;'; pH.setAttribute('data-plotly-container','1');
+      div.appendChild(pH);
+      Plotly.newPlot(pH,[{type:'histogram',x:vals,xbins:isMag?{size:.2}:{size:5},
+        marker:{color:isMag?'#3b82f6':vals.map(v=>_depCol(v)),line:{color:'rgba(255,255,255,.1)',width:.5}},opacity:.88}],
+        {paper_bgcolor:'rgba(0,0,0,0)',plot_bgcolor:'rgba(0,0,0,0)',font:{color:'var(--text-main)',size:13},
+         xaxis:{title:isMag?'Magnitudo':'Kedalaman (km)',gridcolor:'#1e2d40',color:'var(--text-muted)'},
+         yaxis:{title:'Jumlah Event',gridcolor:'#1e2d40',color:'var(--text-muted)'},bargap:.05,
+         margin:{t:30,r:20,b:55,l:60}},{responsive:true});
+
+    } else if (el.type === 'stat_table') {
+      div.innerHTML = _statTableHTML(el, evs, cat);
+    }
+  }
+}
+
+function _getEvs(el, cat) {
+  const jobs = (cat||{}).jobs || [];
+  if (el.job_id) return jobs.find(j=>j.job_id===el.job_id)?.events || [];
+  return jobs.reduce((b,j)=>((j.events?.length||0)>b.length?j.events:b), []);
+}
+
+function _depCol(d) {
+  if (d<=15) return '#22c55e'; if (d<=40) return '#3b82f6';
+  if (d<=70) return '#a855f7'; return '#ef4444';
+}
+
+const _STAT_FIELDS_DEF = ['total','mag_range','mag_avg','depth_range','depth_avg','period','area'];
+
+function _statTableHTML(el, evs, cat) {
+  if (!evs||!evs.length) return '<div class="ps-nodata" style="height:100%"><div class="ps-nodata-icon">📭</div><div>No event data</div></div>';
+
+  const fields = el.stat_fields || _STAT_FIELDS_DEF;
+  const job    = (cat?.jobs||[]).find(j=>j.job_id===el.job_id);
+
+  const mags = evs.map(e=>+(e.mag??NaN)).filter(v=>!isNaN(v));
+  const deps = evs.map(e=>+(e.depth_km??e.depth??NaN)).filter(v=>!isNaN(v));
+  const dts  = evs.map(e=>e.datetime||'').filter(Boolean).sort();
+  const lats = evs.map(e=>+e.lat).filter(v=>!isNaN(v));
+  const lons = evs.map(e=>+e.lon).filter(v=>!isNaN(v));
+  const gaps = evs.map(e=>+(e.gap??NaN)).filter(v=>!isNaN(v));
+  const rmss = evs.map(e=>+(e.rms??NaN)).filter(v=>!isNaN(v));
+  const avg  = a => a.length ? a.reduce((s,v)=>s+v,0)/a.length : null;
+  const mn   = a => a.length ? Math.min(...a) : null;
+  const mx   = a => a.length ? Math.max(...a) : null;
+  const f1   = v => v!=null?v.toFixed(1):'–';
+  const f2   = v => v!=null?v.toFixed(2):'–';
+  const f0   = v => v!=null?v.toFixed(0):'–';
+
+  const allRows = {
+    total       : ['Total Events',        evs.length.toLocaleString()],
+    mag_range   : ['Rentang Magnitudo',   mags.length?`M ${f1(mn(mags))} – M ${f1(mx(mags))}`:'–'],
+    mag_avg     : ['Rata-rata Magnitudo', mags.length?`M ${f2(avg(mags))}`:'–'],
+    depth_range : ['Rentang Kedalaman',   deps.length?`${f0(mn(deps))} – ${f0(mx(deps))} km`:'–'],
+    depth_avg   : ['Rata-rata Kedalaman', deps.length?`${f1(avg(deps))} km`:'–'],
+    period      : ['Periode Waktu',       dts.length?`${dts[0].slice(0,10)} – ${dts[dts.length-1].slice(0,10)}`:'–'],
+    area        : ['Area Geografis',      lats.length?`${f2(mn(lats))}°–${f2(mx(lats))}°N, ${f2(mn(lons))}°–${f2(mx(lons))}°E`:'–'],
+    gap_avg     : ['Rata-rata Gap',       gaps.length?`${f0(avg(gaps))}°`:'–'],
+    rms_avg     : ['Rata-rata RMS',       rmss.length?`${f2(avg(rmss))} s`:'–'],
+  };
+
+  const rows   = fields.filter(f=>allRows[f]).map(f=>allRows[f]);
+  const step   = job ? (job.step||'?') + (job.method?'/'+job.method:'') : 'auto';
+  const srcLbl = `Sumber: <b>[${step}]</b> · ${evs.length} event${dts.length?` · ${dts[0].slice(0,10)} – ${dts[dts.length-1].slice(0,10)}`:''}`;
+
+  return `<div class="ps-stattable-wrap" style="flex-direction:column;gap:10px">
+    <div style="font-size:12px;color:#445060;padding:6px 14px;background:rgba(10,16,28,.6);border-radius:5px;border:1px solid #1e2d40">${srcLbl}</div>
+    <table class="ps-stattable">
+      <thead><tr><th>Parameter</th><th>Value</th></tr></thead>
+      <tbody>${rows.map(r=>`<tr><td>${r[0]}</td><td>${r[1]}</td></tr>`).join('')}</tbody>
+    </table>
+  </div>`;
+}
+
+function _esc(s) {
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+/* ── Chrome ── */
+function _updateChrome() {
+  document.getElementById('pres-counter').textContent = `${_cur+1} / ${_slides.length}`;
+  document.getElementById('pres-prev').disabled = _cur === 0;
+  document.getElementById('pres-next').disabled = _cur === _slides.length-1;
+  document.querySelectorAll('.pres-dot').forEach((d,i) => d.classList.toggle('active', i===_cur));
+  document.getElementById('pres-slide-badge').textContent = `${_cur+1} / ${_slides.length}`;
+}
+
+/* ── Keyboard ── */
+document.addEventListener('keydown', e => {
+  const tag = document.activeElement?.tagName;
+  if (tag==='INPUT'||tag==='TEXTAREA') return;
+  if (e.key==='ArrowRight'||e.key===' '||e.key==='PageDown') { e.preventDefault(); presGo(+1); }
+  if (e.key==='ArrowLeft' ||e.key==='PageUp')               { e.preventDefault(); presGo(-1); }
+  if (e.key==='Home') { e.preventDefault(); _goTo(0); }
+  if (e.key==='End')  { e.preventDefault(); _goTo(_slides.length-1); }
+  if (e.key==='f'||e.key==='F') presFullscreen();
+  if (e.key==='Escape'&&document.fullscreenElement) document.exitFullscreen();
+});
+
+/* ── Fullscreen ── */
+function presFullscreen() {
+  if (!document.fullscreenElement) document.documentElement.requestFullscreen().catch(()=>{});
+  else document.exitFullscreen();
+}
+document.addEventListener('fullscreenchange', () => setTimeout(_applyScale, 50));
+
+presInit();
+</script>
+</body>
+</html>

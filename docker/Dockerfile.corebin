@@ -1,0 +1,52 @@
+# ============================================================
+#  SeisWork — core binaries image (cross-OS)
+#
+#  Compiles every SeisWork core binary from source (the same
+#  recipes as install.sh Step 2/3) into a small Linux image, so
+#  users on macOS / Windows (WSL) / any Linux distro can run the
+#  scientific binaries without a local toolchain:
+#    NLLoc, Grid2Time, Vel2Grid, Time2EQ, PhsAssoc,
+#    REAL, hypoDD, ph2dt, growclust,
+#    MatchLocate2*, SelectFinal, SHIFT, lsac, ccsacc, FDTCC*,
+#    velest, hypoinverse            (* = best-effort/optional)
+#
+#  VELEST and Hypoinverse are built from the sources bundled in
+#  core/src; the rest are fetched from their upstream repos at
+#  build time (network required once).
+#
+#  Build (from the repo root):
+#    bash docker/build_corebin.sh              # image only
+#    bash docker/build_corebin.sh --wrappers   # + wrappers in core/bin-docker/
+#
+#  Run a binary (mount your data at the same path):
+#    docker run --rm -v "$HOME:$HOME" -w "$PWD" seiswork-corebin NLLoc run.in
+# ============================================================
+
+# ── Stage 1: builder ─────────────────────────────────────────────────────────
+FROM --platform=linux/amd64 ubuntu:22.04 AS builder
+
+RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        gcc g++ gfortran make cmake git wget gawk ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY core/src /build/src
+COPY docker/corebin-build-inside.sh /build/corebin-build-inside.sh
+RUN bash /build/corebin-build-inside.sh
+
+# ── Stage 2: runtime ─────────────────────────────────────────────────────────
+FROM --platform=linux/amd64 ubuntu:22.04
+
+RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        libgfortran5 libgomp1 libquadmath0 && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /out/ /opt/seiswork/bin/
+
+ENV PATH="/opt/seiswork/bin:${PATH}"
+WORKDIR /work
+
+COPY docker/corebin-entrypoint.sh /usr/local/bin/corebin-entrypoint.sh
+RUN chmod +x /usr/local/bin/corebin-entrypoint.sh
+ENTRYPOINT ["/usr/local/bin/corebin-entrypoint.sh"]

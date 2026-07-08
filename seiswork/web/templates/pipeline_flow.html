@@ -1,0 +1,1275 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Pipeline Flow Monitor — SeisWork</title>
+<link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='img/seiswork-pipeline.svg') }}">
+<script src="{{ url_for('static', filename='js/native-bridge.js') }}"></script>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:       #f1f5f9;
+  --bg2:      #ffffff;
+  --bg3:      #f8fafc;
+  --border:   var(--text-main);
+  --text:     var(--bg-card);
+  --muted:    var(--text-muted);
+  --green:    #16a34a;
+  --blue:     #2563eb;
+  --amber:    #d97706;
+  --red:      #dc2626;
+  --purple:   #9333ea;
+  --cyan:     #0891b2;
+}
+
+body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, sans-serif; min-height: 100vh; overflow-x: hidden; }
+
+/* ── Header ── */
+.pf-header {
+  display: flex; align-items: center; gap: .75rem;
+  padding: .7rem 1.2rem; background: var(--bg2);
+  border-bottom: 1px solid var(--border);
+  position: sticky; top: 0; z-index: 100;
+}
+.pf-header .logo { font-size: .85rem; font-weight: 700; color: var(--cyan); letter-spacing: .04em; }
+.pf-header .title { font-size: .9rem; font-weight: 600; color: var(--text); }
+.pf-header .subtitle { font-size: .72rem; color: var(--muted); }
+.pf-header .spacer { flex: 1; }
+.pf-header .clock {
+  font-family: monospace; font-size: .85rem; color: var(--cyan);
+  background: rgba(8,145,178,.07); padding: .2rem .6rem; border-radius: 4px;
+  border: 1px solid rgba(8,145,178,.25);
+}
+.pf-status-badge {
+  font-size: .7rem; font-weight: 700; padding: .2rem .55rem; border-radius: 12px;
+  letter-spacing: .04em;
+}
+.pf-status-badge.running { background: rgba(22,163,74,.12); color: var(--green); border: 1px solid rgba(22,163,74,.35); }
+.pf-status-badge.stopped { background: rgba(148,163,184,.15); color: var(--muted); border: 1px solid var(--border); }
+.pf-status-badge.error   { background: rgba(220,38,38,.1);   color: var(--red);   border: 1px solid rgba(220,38,38,.3); }
+
+.pf-back {
+  font-size: .72rem; color: var(--muted); text-decoration: none;
+  padding: .25rem .5rem; border: 1px solid var(--border); border-radius: 4px;
+  transition: color .15s, border-color .15s;
+}
+.pf-back:hover { color: var(--text); border-color: var(--cyan); }
+
+/* ── Main layout ── */
+.pf-main { padding: 1.2rem 1.4rem; display: flex; flex-direction: column; gap: 1.2rem; }
+
+/* ── Pipeline canvas area ── */
+.pf-pipeline-wrap {
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: 10px; padding: 1.4rem 1rem;
+  position: relative; overflow: hidden;
+}
+.pf-pipeline-wrap::before {
+  content: ''; position: absolute; inset: 0;
+  background: radial-gradient(ellipse at 50% 0%, rgba(8,145,178,.04) 0%, transparent 65%);
+  pointer-events: none;
+}
+.pf-pipeline { display: flex; align-items: center; justify-content: center; gap: 0; flex-wrap: nowrap; }
+
+/* ── Node ── */
+.pf-node {
+  background: var(--bg3); border: 1px solid var(--border);
+  border-radius: 10px; padding: .85rem .9rem; width: 162px; min-height: 150px;
+  position: relative; transition: border-color .3s, box-shadow .3s;
+  flex-shrink: 0;
+}
+.pf-node.active {
+  border-color: rgba(22,163,74,.5);
+  box-shadow: 0 2px 16px rgba(22,163,74,.12);
+}
+.pf-node.error-state {
+  border-color: rgba(220,38,38,.4);
+  box-shadow: 0 2px 16px rgba(220,38,38,.1);
+}
+.pf-node .node-icon { font-size: 1.3rem; margin-bottom: .35rem; }
+.pf-node .node-title { font-size: .78rem; font-weight: 700; color: var(--text); margin-bottom: .1rem; }
+.pf-node .node-sub   { font-size: .65rem; color: var(--muted); margin-bottom: .5rem; }
+.pf-node .node-status {
+  display: inline-flex; align-items: center; gap: .3rem;
+  font-size: .65rem; font-weight: 600; padding: .15rem .4rem;
+  border-radius: 8px; margin-bottom: .5rem;
+}
+.pf-node .node-status.ok     { background: rgba(22,163,74,.1);  color: var(--green); }
+.pf-node .node-status.idle   { background: rgba(148,163,184,.15); color: var(--muted); }
+.pf-node .node-status.err    { background: rgba(220,38,38,.1);  color: var(--red); }
+.pf-node .node-status.loading{ background: rgba(217,119,6,.1);  color: var(--amber); }
+.node-dot {
+  width: 6px; height: 6px; border-radius: 50%; background: currentColor;
+}
+.ok .node-dot   { animation: blink-green 1.2s ease-in-out infinite; }
+.idle .node-dot { animation: none; }
+.err .node-dot  { animation: blink-red 0.8s ease-in-out infinite; }
+.loading .node-dot { animation: blink-amber 1s ease-in-out infinite; }
+
+@keyframes blink-green { 0%,100% { opacity:1; } 50% { opacity:.3; } }
+@keyframes blink-red   { 0%,100% { opacity:1; } 50% { opacity:.2; } }
+@keyframes blink-amber { 0%,100% { opacity:1; } 50% { opacity:.3; } }
+
+.pf-node .node-metrics { display: flex; flex-direction: column; gap: .22rem; }
+.node-metric { display: flex; justify-content: space-between; align-items: baseline; }
+.node-metric .mk { font-size: .62rem; color: var(--muted); }
+.node-metric .mv { font-size: .72rem; font-weight: 700; font-family: monospace; color: var(--text); }
+.node-metric .mv.hi   { color: var(--green); }
+.node-metric .mv.mid  { color: var(--amber); }
+.node-metric .mv.lo   { color: var(--muted); }
+
+/* ── Connector (arrow + animated flow) ── */
+.pf-connector {
+  flex-shrink: 0; width: 56px; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; position: relative; gap: 3px;
+}
+.conn-label { font-size: .6rem; color: var(--muted); text-align: center; line-height: 1.2; }
+.conn-track {
+  width: 100%; height: 16px; position: relative; overflow: hidden;
+}
+.conn-line {
+  position: absolute; top: 50%; left: 0; right: 0; height: 2px;
+  background: var(--border); transform: translateY(-50%);
+}
+.conn-arrow {
+  position: absolute; right: -1px; top: 50%; transform: translateY(-50%);
+  width: 0; height: 0;
+  border-top: 5px solid transparent;
+  border-bottom: 5px solid transparent;
+  border-left: 8px solid var(--border);
+  transition: border-left-color .3s;
+}
+.conn-particles {
+  position: absolute; top: 50%; left: 0; width: 100%; height: 2px;
+  transform: translateY(-50%); overflow: hidden;
+}
+.conn-particle {
+  position: absolute; top: -2px; width: 14px; height: 6px; border-radius: 3px;
+  background: linear-gradient(90deg, transparent, var(--cyan), transparent);
+  opacity: 0;
+}
+/* 3 particles staggered per connector */
+.conn-particle:nth-child(1) { animation: flow 1.8s .0s linear infinite; }
+.conn-particle:nth-child(2) { animation: flow 1.8s .6s linear infinite; }
+.conn-particle:nth-child(3) { animation: flow 1.8s 1.2s linear infinite; }
+
+@keyframes flow {
+  0%   { left: -14px; opacity: 0; }
+  10%  { opacity: 1; }
+  90%  { opacity: 1; }
+  100% { left: 100%; opacity: 0; }
+}
+
+.pf-connector.active .conn-line  { background: rgba(8,145,178,.45); }
+.pf-connector.active .conn-arrow { border-left-color: rgba(8,145,178,.65); }
+.pf-connector.active .conn-particle { display: block; }
+.pf-connector:not(.active) .conn-particle { animation: none; opacity: 0; }
+
+/* ── Bottom split: log + events ── */
+.pf-bottom { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+@media (max-width: 900px) { .pf-bottom { grid-template-columns: 1fr; } }
+
+.pf-panel {
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: 8px; overflow: hidden;
+}
+.pf-panel-head {
+  display: flex; align-items: center; gap: .5rem;
+  padding: .5rem .8rem; background: var(--bg3);
+  border-bottom: 1px solid var(--border);
+  font-size: .75rem; font-weight: 700; color: var(--text);
+}
+.pf-panel-head .ph-badge {
+  font-size: .6rem; font-weight: 600; padding: .12rem .4rem;
+  border-radius: 8px; background: rgba(8,145,178,.12); color: var(--cyan);
+  border: 1px solid rgba(8,145,178,.25);
+}
+.pf-panel-body { height: 280px; overflow-y: auto; padding: .4rem 0; }
+.pf-panel-body::-webkit-scrollbar { width: 4px; }
+.pf-panel-body::-webkit-scrollbar-track { background: transparent; }
+.pf-panel-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+/* Engine log rows */
+.log-row {
+  display: flex; gap: .5rem; align-items: baseline;
+  padding: .18rem .8rem; font-size: .68rem; font-family: monospace;
+  border-left: 2px solid transparent;
+  transition: background .1s;
+}
+.log-row:hover { background: rgba(0,0,0,.02); }
+.log-row.lv-event { border-left-color: var(--green); background: rgba(22,163,74,.05); }
+.log-row.lv-error { border-left-color: var(--red);   background: rgba(220,38,38,.04); }
+.log-row.lv-warn  { border-left-color: var(--amber); background: rgba(217,119,6,.04); }
+.log-row.lv-info  { border-left-color: transparent; }
+.log-row .lt { color: var(--muted); flex-shrink: 0; min-width: 58px; }
+.log-row .ls {
+  flex-shrink: 0; min-width: 56px;
+  font-size: .62rem; font-weight: 700; padding: .1rem .28rem; border-radius: 3px;
+}
+.ls.src-phasenet { color: var(--blue);   background: rgba(37,99,235,.1); }
+.ls.src-gamma    { color: var(--purple); background: rgba(147,51,234,.1); }
+.ls.src-system   { color: var(--muted);  background: rgba(148,163,184,.15); }
+.ls.src-scautopick{ color: var(--amber); background: rgba(217,119,6,.1); }
+.log-row .lm { color: var(--text); flex: 1; word-break: break-all; }
+
+/* Events list */
+.ev-row {
+  display: flex; flex-direction: column; gap: .08rem;
+  padding: .35rem .8rem; border-bottom: 1px solid var(--border);
+  cursor: default;
+  transition: background .1s;
+}
+.ev-row:hover { background: rgba(0,0,0,.02); }
+.ev-row .ev-id   { font-size: .6rem; color: var(--muted); font-family: monospace; }
+.ev-row .ev-time { font-size: .68rem; font-weight: 700; color: var(--cyan); font-family: monospace; }
+.ev-row .ev-params { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .1rem; }
+.ev-param { font-size: .66rem; }
+.ev-param .epk { color: var(--muted); margin-right: .15rem; }
+.ev-param .epv { font-weight: 700; font-family: monospace; }
+.ev-param .epv.mag { color: var(--amber); }
+.ev-param .epv.dep { color: var(--cyan); }
+
+/* ── Pick rate sparkline ── */
+.pf-sparkline-wrap {
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: 8px; padding: .6rem .9rem;
+  display: flex; gap: 1rem; align-items: center;
+}
+.spark-label { font-size: .72rem; color: var(--muted); white-space: nowrap; }
+.spark-canvas { flex: 1; height: 38px; display: block; }
+
+/* ── Station grid ── */
+.pf-sta-section {
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: 8px; overflow: hidden;
+}
+.pf-sta-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(108px, 1fr));
+  gap: .35rem; padding: .5rem .7rem;
+  max-height: 340px; overflow-y: auto;
+}
+.pf-sta-grid::-webkit-scrollbar { width: 4px; }
+.pf-sta-grid::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+.sta-card {
+  background: var(--bg3); border: 1px solid var(--border);
+  border-radius: 6px; padding: .3rem .45rem; cursor: pointer;
+  transition: border-color .15s, box-shadow .15s;
+  position: relative;
+}
+.sta-card:hover { border-color: var(--cyan); box-shadow: 0 2px 8px rgba(8,145,178,.15); }
+.sta-card.selected { border-color: var(--cyan); box-shadow: 0 2px 10px rgba(8,145,178,.2); background: rgba(8,145,178,.06); }
+.sta-card.fresh    { border-left: 3px solid var(--green); }
+.sta-card.recent   { border-left: 3px solid var(--amber); }
+.sta-card.stale    { border-left: 3px solid var(--border); opacity: .55; }
+.sta-card.nodata   { border-left: 3px solid #cbd5e1; opacity: .45; }
+
+.sta-name  { font-size: .73rem; font-weight: 700; color: var(--text); font-family: monospace; }
+.sta-cha   { font-size: .58rem; color: var(--muted); margin-bottom: .18rem; }
+.sta-picks { display: flex; flex-direction: column; gap: .08rem; }
+.sta-pick-row { display: flex; justify-content: space-between; align-items: center; }
+.sta-ph    { font-size: .62rem; font-weight: 700; padding: .05rem .22rem; border-radius: 3px; }
+.sta-ph.P  { color: var(--red);    background: rgba(220,38,38,.12); }
+.sta-ph.S  { color: var(--blue);   background: rgba(37,99,235,.12); }
+.sta-ph.none { color: var(--muted); background: transparent; }
+.sta-ago   { font-size: .58rem; color: var(--muted); font-family: monospace; }
+.sta-score { font-size: .58rem; color: var(--cyan); font-family: monospace; }
+
+/* ── Picker waveform window ── */
+.pf-wv-section {
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: 8px; overflow: hidden;
+}
+.pf-wv-head {
+  display: flex; align-items: center; gap: .5rem;
+  padding: .5rem .8rem; background: var(--bg3);
+  border-bottom: 1px solid var(--border);
+  font-size: .75rem; font-weight: 700;
+}
+.pf-wv-head .wv-hint {
+  font-size: .65rem; font-weight: 400; color: var(--muted); margin-left: auto;
+}
+.pf-wv-canvas-wrap {
+  padding: .5rem .6rem; position: relative;
+}
+#pf-wv-canvas {
+  display: block; width: 100%; border-radius: 4px;
+  background: #f8fafc;
+  border: 1px solid var(--border);
+}
+.pf-wv-legend {
+  display: flex; gap: .8rem; padding: .3rem .8rem .5rem;
+  font-size: .62rem;
+}
+.wvl-item { display: flex; align-items: center; gap: .28rem; }
+.wvl-line { width: 16px; height: 2px; border-radius: 1px; }
+
+/* ── Probability panel ── */
+.pf-prob-label {
+  position: absolute; left: 2px; font-size: 7px; font-family: monospace;
+  color: rgba(100,116,139,.8); writing-mode: horizontal-tb;
+}
+.pf-wv-thr-badge {
+  display: inline-flex; gap: .25rem; align-items: center;
+  font-size: .6rem; padding: .1rem .3rem; border-radius: 4px;
+  font-family: monospace; font-weight: 700;
+}
+.thr-p { background: rgba(239,68,68,.15); color: #ef4444; border:1px solid rgba(239,68,68,.3); }
+.thr-s { background: rgba(59,130,246,.15); color: #3b82f6; border:1px solid rgba(59,130,246,.3); }
+
+/* ── Misc ── */
+.pf-empty { text-align: center; color: var(--muted); font-size: .72rem; padding: 2rem 0; }
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<div class="pf-header">
+  <div>
+    <div class="logo">SeisWork</div>
+    <div class="title">Pipeline Flow Monitor</div>
+  </div>
+  <div style="display:flex;flex-direction:column;gap:.1rem">
+    <span class="subtitle" id="pf-flow-sub">Alur realtime: SDS → PhaseNet → REAL → NLLoc → Events</span>
+    <span class="subtitle" id="pf-sub-note" style="color:var(--muted)"></span>
+  </div>
+  <div class="spacer"></div>
+  <span id="pf-global-badge" class="pf-status-badge stopped">STOPPED</span>
+  <span class="clock" id="pf-clock">--:--:-- UTC</span>
+</div>
+
+<!-- Main -->
+<div class="pf-main">
+
+  <!-- Pipeline nodes -->
+  <div class="pf-pipeline-wrap">
+    <div class="pf-pipeline">
+
+      <!-- Node 1: SDS Data -->
+      <div class="pf-node" id="pf-n-sds">
+        <div class="node-icon">🗄️</div>
+        <div class="node-title">SDS Archive</div>
+        <div class="node-sub">Data waveform input</div>
+        <div class="node-status idle" id="pf-s-sds"><span class="node-dot"></span><span>—</span></div>
+        <div class="node-metrics">
+          <div class="node-metric"><span class="mk">Sumber</span><span class="mv lo" id="pf-sds-src">—</span></div>
+          <div class="node-metric"><span class="mk">Stations</span><span class="mv" id="pf-sds-sta">—</span></div>
+          <div class="node-metric"><span class="mk">Path</span></div>
+          <div style="font-size:.58rem;color:var(--muted);word-break:break-all;margin-top:.1rem" id="pf-sds-path">—</div>
+        </div>
+      </div>
+
+      <!-- Connector 1→2 -->
+      <div class="pf-connector" id="pf-c1">
+        <span class="conn-label">waveform<br>stream</span>
+        <div class="conn-track">
+          <div class="conn-line"></div>
+          <div class="conn-particles">
+            <div class="conn-particle"></div>
+            <div class="conn-particle"></div>
+            <div class="conn-particle"></div>
+          </div>
+          <div class="conn-arrow"></div>
+        </div>
+      </div>
+
+      <!-- Node 2: PhaseNet Picker -->
+      <div class="pf-node" id="pf-n-picker">
+        <div class="node-icon">🔬</div>
+        <div class="node-title">PhaseNet Picker</div>
+        <div class="node-sub">Deep-learning P/S</div>
+        <div class="node-status idle" id="pf-s-picker"><span class="node-dot"></span><span>—</span></div>
+        <div class="node-metrics">
+          <div class="node-metric"><span class="mk">Siklus</span><span class="mv" id="pf-pk-cyc">—</span></div>
+          <div class="node-metric"><span class="mk">Total picks</span><span class="mv hi" id="pf-pk-tot">—</span></div>
+          <div class="node-metric"><span class="mk">Picks/min</span><span class="mv" id="pf-pk-rate">—</span></div>
+          <div class="node-metric"><span class="mk">Idle sejak</span><span class="mv lo" id="pf-pk-idle">—</span></div>
+        </div>
+      </div>
+
+      <!-- Connector 2→3 -->
+      <div class="pf-connector" id="pf-c2">
+        <span class="conn-label">P/S picks<br>rolling buf</span>
+        <div class="conn-track">
+          <div class="conn-line"></div>
+          <div class="conn-particles">
+            <div class="conn-particle"></div>
+            <div class="conn-particle"></div>
+            <div class="conn-particle"></div>
+          </div>
+          <div class="conn-arrow"></div>
+        </div>
+      </div>
+
+      <!-- Node 3: Associator (REAL / GaMMA) -->
+      <div class="pf-node" id="pf-n-assoc">
+        <div class="node-icon">🧮</div>
+        <div class="node-title" id="pf-as-title">REAL Associator</div>
+        <div class="node-sub" id="pf-as-subtitle">Grid travel-time + NLLoc</div>
+        <div class="node-status idle" id="pf-s-assoc"><span class="node-dot"></span><span>—</span></div>
+        <div class="node-metrics">
+          <div class="node-metric"><span class="mk">Siklus</span><span class="mv" id="pf-as-cyc">—</span></div>
+          <div class="node-metric"><span class="mk">Total event</span><span class="mv hi" id="pf-as-tot">—</span></div>
+          <div class="node-metric"><span class="mk">NLLoc refine</span><span class="mv" id="pf-as-nll">—</span></div>
+          <div class="node-metric"><span class="mk">Idle sejak</span><span class="mv lo" id="pf-as-idle">—</span></div>
+        </div>
+      </div>
+
+      <!-- Connector 3→4 -->
+      <div class="pf-connector" id="pf-c3">
+        <span class="conn-label">event<br>param</span>
+        <div class="conn-track">
+          <div class="conn-line"></div>
+          <div class="conn-particles">
+            <div class="conn-particle"></div>
+            <div class="conn-particle"></div>
+            <div class="conn-particle"></div>
+          </div>
+          <div class="conn-arrow"></div>
+        </div>
+      </div>
+
+      <!-- Node 4: Events Output -->
+      <div class="pf-node" id="pf-n-events">
+        <div class="node-icon">📍</div>
+        <div class="node-title">Events Output</div>
+        <div class="node-sub">Detection catalog</div>
+        <div class="node-status idle" id="pf-s-events"><span class="node-dot"></span><span>—</span></div>
+        <div class="node-metrics">
+          <div class="node-metric"><span class="mk">Total event</span><span class="mv hi" id="pf-ev-tot">—</span></div>
+          <div class="node-metric"><span class="mk">Event terbaru</span></div>
+          <div id="pf-ev-last" style="font-size:.62rem;color:var(--cyan);font-family:monospace;margin-top:.15rem;word-break:break-all">—</div>
+          <div id="pf-ev-mag"  style="font-size:.7rem;font-weight:700;color:var(--amber);margin-top:.1rem">—</div>
+        </div>
+      </div>
+
+    </div><!-- /pf-pipeline -->
+  </div><!-- /pf-pipeline-wrap -->
+
+  <!-- Sparkline pick rate -->
+  <div class="pf-sparkline-wrap">
+    <span class="spark-label">Pick rate<br><span style="color:var(--cyan);font-size:.65rem">(per minute)</span></span>
+    <canvas class="spark-canvas" id="pf-spark"></canvas>
+    <div style="display:flex;flex-direction:column;align-items:flex-end;gap:.2rem">
+      <span style="font-size:1.1rem;font-weight:800;font-family:monospace;color:var(--cyan)" id="pf-spark-now">—</span>
+      <span style="font-size:.62rem;color:var(--muted)">picks/min</span>
+    </div>
+  </div>
+
+  <!-- Station grid + Picker waveform window -->
+  <div style="display:grid;grid-template-columns:1fr 1.6fr;gap:1rem">
+
+    <!-- Station grid -->
+    <div class="pf-sta-section">
+      <div class="pf-panel-head">
+        <span>Configured Stations</span>
+        <span class="ph-badge" id="pf-sta-cnt">0</span>
+        <span id="pf-sta-sub" style="font-size:.6rem;color:var(--muted)"></span>
+        <span style="margin-left:auto;font-size:.6rem;color:var(--muted)">click → waveform</span>
+      </div>
+      <div class="pf-sta-grid" id="pf-sta-grid">
+        <div class="pf-empty">Menunggu data…</div>
+      </div>
+      <div style="display:flex;gap:.8rem;padding:.3rem .7rem .45rem;font-size:.58rem;color:var(--muted);flex-wrap:wrap">
+        <span style="border-left:3px solid var(--green);padding-left:.3rem">pick &lt;30s</span>
+        <span style="border-left:3px solid var(--amber);padding-left:.3rem">30–120s</span>
+        <span style="border-left:3px solid var(--border);padding-left:.3rem">no picks</span>
+        <span style="border-left:3px solid var(--border);padding-left:.3rem;opacity:.6">no data</span>
+      </div>
+    </div>
+
+    <!-- Picker waveform + probability simulation -->
+    <div class="pf-wv-section">
+      <div class="pf-wv-head">
+        <span>🔬 Simulasi Picker</span>
+        <span id="pf-wv-staname" style="font-family:monospace;color:var(--cyan);font-size:.8rem">—</span>
+        <span style="margin-left:auto;display:flex;gap:.4rem;align-items:center">
+          <span class="pf-wv-thr-badge thr-p" id="pf-thr-p">P≥0.30</span>
+          <span class="pf-wv-thr-badge thr-s" id="pf-thr-s">S≥0.60</span>
+        </span>
+      </div>
+      <!-- Canvas gabungan: waveform atas + probabilitas bawah -->
+      <div class="pf-wv-canvas-wrap" style="padding:.4rem .6rem .2rem">
+        <canvas id="pf-wv-canvas"></canvas>
+      </div>
+      <!-- Legenda -->
+      <div class="pf-wv-legend" style="flex-wrap:wrap;gap:.6rem .9rem">
+        <div class="wvl-item"><div class="wvl-line" style="background:var(--cyan)"></div><span style="color:var(--muted)">waveform</span></div>
+        <div class="wvl-item"><div class="wvl-line" style="background:var(--red)"></div><span style="color:var(--muted)">P pick</span></div>
+        <div class="wvl-item"><div class="wvl-line" style="background:var(--blue)"></div><span style="color:var(--muted)">S pick</span></div>
+        <div class="wvl-item"><div class="wvl-line" style="background:rgba(239,68,68,.5);height:1px"></div><span style="color:var(--muted)">kurva prob-P</span></div>
+        <div class="wvl-item"><div class="wvl-line" style="background:rgba(59,130,246,.5);height:1px"></div><span style="color:var(--muted)">kurva prob-S</span></div>
+        <div class="wvl-item"><div class="wvl-line" style="background:rgba(255,200,0,.5);height:1px;border-top:1px dashed rgba(255,200,0,.5)"></div><span style="color:var(--muted)">window 30s</span></div>
+        <span id="pf-wv-info" style="margin-left:auto;font-size:.6rem;color:var(--muted)"></span>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Bottom: engine log + events -->
+  <div class="pf-bottom">
+
+    <!-- Engine Log -->
+    <div class="pf-panel">
+      <div class="pf-panel-head">
+        <span>Engine Log</span>
+        <span class="ph-badge" id="pf-log-cnt">0</span>
+        <span style="margin-left:auto;font-size:.62rem;color:var(--muted)" id="pf-log-ts"></span>
+      </div>
+      <div class="pf-panel-body" id="pf-log-body">
+        <div class="pf-empty">Menunggu data…</div>
+      </div>
+    </div>
+
+    <!-- Recent Events -->
+    <div class="pf-panel">
+      <div class="pf-panel-head">
+        <span>Event Terdeteksi</span>
+        <span class="ph-badge" id="pf-ev-cnt">0</span>
+      </div>
+      <div class="pf-panel-body" id="pf-ev-body">
+        <div class="pf-empty">No events yet…</div>
+      </div>
+    </div>
+
+  </div>
+
+</div><!-- /pf-main -->
+
+<script>
+const POLL_MS = 2000;
+const SPARK_MAX = 60;  // keep the last 60 points (~2 minutes)
+const _sparkData = [];
+let _prevLogLen = 0;
+
+// ── Clock ──────────────────────────────────────────────────────────────────
+function _clockTick() {
+  const d = new Date();
+  const p = n => String(n).padStart(2, '0');
+  document.getElementById('pf-clock').textContent =
+    `${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())} UTC`;
+}
+setInterval(_clockTick, 1000); _clockTick();
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+function _idleFmt(sec) {
+  if (sec == null) return '—';
+  if (sec < 5)   return `${sec.toFixed(1)}s`;
+  if (sec < 60)  return `${Math.round(sec)}s`;
+  if (sec < 3600) return `${Math.floor(sec/60)}m${Math.round(sec%60)}s`;
+  return `${Math.floor(sec/3600)}h`;
+}
+
+function _setStatus(id, cls, label) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.className = `node-status ${cls}`;
+  el.innerHTML = `<span class="node-dot"></span><span>${label}</span>`;
+}
+
+function _nodeActive(nodeId, on) {
+  const el = document.getElementById(nodeId);
+  if (!el) return;
+  el.classList.toggle('active', on);
+  el.classList.remove('error-state');
+}
+
+function _nodeError(nodeId, on) {
+  const el = document.getElementById(nodeId);
+  if (!el) return;
+  el.classList.toggle('error-state', on);
+  el.classList.remove('active');
+}
+
+function _set(id, txt, cls) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = txt != null ? String(txt) : '—';
+  if (cls != null) el.className = `mv ${cls}`;
+}
+
+function _connActive(id, on) {
+  const el = document.getElementById(id);
+  if (el) el.classList.toggle('active', on);
+}
+
+// ── Sparkline (canvas) ─────────────────────────────────────────────────────
+function _drawSpark() {
+  const canvas = document.getElementById('pf-spark');
+  if (!canvas) return;
+  const W = canvas.offsetWidth, H = canvas.offsetHeight;
+  if (!W || !H) return;
+  canvas.width = W * devicePixelRatio; canvas.height = H * devicePixelRatio;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(devicePixelRatio, devicePixelRatio);
+  ctx.clearRect(0, 0, W, H);
+
+  const data = _sparkData.slice(-SPARK_MAX);
+  if (data.length < 2) return;
+
+  const mx = Math.max(...data, 1);
+  const toX = i => (i / (data.length - 1)) * W;
+  const toY = v => H - (v / mx) * (H - 4) - 2;
+
+  // Fill gradient
+  const grad = ctx.createLinearGradient(0, 0, 0, H);
+  grad.addColorStop(0, 'rgba(8,145,178,.25)');
+  grad.addColorStop(1, 'rgba(8,145,178,.02)');
+  ctx.beginPath();
+  ctx.moveTo(toX(0), H);
+  data.forEach((v, i) => ctx.lineTo(toX(i), toY(v)));
+  ctx.lineTo(toX(data.length - 1), H);
+  ctx.closePath();
+  ctx.fillStyle = grad; ctx.fill();
+
+  // Line
+  ctx.beginPath();
+  data.forEach((v, i) => i === 0 ? ctx.moveTo(toX(i), toY(v)) : ctx.lineTo(toX(i), toY(v)));
+  ctx.strokeStyle = '#0891b2'; ctx.lineWidth = 1.5;
+  ctx.lineJoin = 'round'; ctx.stroke();
+
+  // Last dot
+  const lx = toX(data.length - 1), ly = toY(data[data.length - 1]);
+  ctx.beginPath(); ctx.arc(lx, ly, 3, 0, Math.PI * 2);
+  ctx.fillStyle = '#0891b2'; ctx.fill();
+}
+
+// ── UTC time format ────────────────────────────────────────────────────────
+function _fmtEpochUTC(ep) {
+  const d = new Date(ep * 1000);
+  const p = n => String(n).padStart(2, '0');
+  return `${d.getUTCFullYear()}-${p(d.getUTCMonth()+1)}-${p(d.getUTCDate())} `
+       + `${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}`;
+}
+
+function _fmtISOUTC(iso) {
+  if (!iso || iso === 'None') return '—';
+  const d = new Date(iso.replace(' ', 'T').replace(/([+-]\d{2}:\d{2}|Z)?$/, 'Z'));
+  if (isNaN(d)) return iso.slice(0, 19);
+  const p = n => String(n).padStart(2, '0');
+  return `${d.getUTCFullYear()}-${p(d.getUTCMonth()+1)}-${p(d.getUTCDate())} `
+       + `${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}`;
+}
+
+// ── Active associator backend → display info (REAL / GaMMA / PyOcto / glass3).
+// Mirrors OnlineMonitorModule._beInfo() so all backends label correctly instead
+// of the old `backend === 'gamma' ? 'GaMMA' : 'REAL'` ternary that mislabeled
+// PyOcto/glass3 as REAL.
+function _beInfo(backend) {
+  const m = {
+    real  : { label: 'REAL',   sub: 'Grid travel-time + NLLoc' },
+    gamma : { label: 'GaMMA',  sub: 'Bayesian GMM + NLLoc' },
+    pyocto: { label: 'PyOcto', sub: 'PyOcto associator + NLLoc' },
+    glass3: { label: 'glass3', sub: 'glass3 associator + NLLoc' },
+  };
+  return m[backend] || m.real;
+}
+
+// ── Render engine log ──────────────────────────────────────────────────────
+function _renderLog(logs, backend) {
+  if (!logs || !logs.length) return;
+  const body = document.getElementById('pf-log-body');
+  if (!body) return;
+  const isBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 40;
+
+  // The 'gamma' source key is the associator log — its label follows the active
+  // engine backend (REAL / GaMMA / PyOcto / glass3), like the online monitor.
+  const _beLbl = _beInfo(backend).label;
+
+  const fragment = document.createDocumentFragment();
+  logs.forEach(l => {
+    const row = document.createElement('div');
+    row.className = `log-row lv-${l.level || 'info'}`;
+    const t = new Date(l.t * 1000);
+    const p = n => String(n).padStart(2, '0');
+    const ts = `${p(t.getUTCHours())}:${p(t.getUTCMinutes())}:${p(t.getUTCSeconds())}`;
+    const srcRaw = l.source || 'system';
+    const srcCls = `ls src-${srcRaw.replace(/[^a-z]/g, '')}`;
+    const srcLbl = srcRaw === 'gamma' ? _beLbl : (l.source || 'sys');
+    row.innerHTML =
+      `<span class="lt">${ts}</span>` +
+      `<span class="${srcCls}">${srcLbl}</span>` +
+      `<span class="lm">${_esc(l.msg || '')}</span>`;
+    fragment.appendChild(row);
+  });
+
+  // Replace content fully each poll (the log array is already ordered)
+  body.innerHTML = '';
+  body.appendChild(fragment);
+  document.getElementById('pf-log-cnt').textContent = logs.length;
+  const lastTs = logs[logs.length - 1];
+  if (lastTs) {
+    const dt = new Date(lastTs.t * 1000);
+    const p  = n => String(n).padStart(2, '0');
+    document.getElementById('pf-log-ts').textContent =
+      `${p(dt.getUTCHours())}:${p(dt.getUTCMinutes())}:${p(dt.getUTCSeconds())} UTC`;
+  }
+  if (isBottom) body.scrollTop = body.scrollHeight;
+}
+
+function _esc(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ── Render events list ─────────────────────────────────────────────────────
+function _renderEvents(evs) {
+  const body = document.getElementById('pf-ev-body');
+  if (!body) return;
+  document.getElementById('pf-ev-cnt').textContent = evs.length;
+  if (!evs.length) {
+    body.innerHTML = '<div class="pf-empty">No events yet…</div>'; return;
+  }
+  const frag = document.createDocumentFragment();
+  evs.forEach(e => {
+    const row = document.createElement('div');
+    row.className = 'ev-row';
+    const lat  = e.lat  != null ? Number(e.lat).toFixed(3)  : '—';
+    const lon  = e.lon  != null ? Number(e.lon).toFixed(3)  : '—';
+    const dep  = e.depth!= null ? Number(e.depth).toFixed(1): '—';
+    const mag  = e.mag  != null ? `ML ${Number(e.mag).toFixed(1)}` : '—';
+    row.innerHTML =
+      `<span class="ev-id">${e.id || '—'}</span>` +
+      `<span class="ev-time">${_fmtISOUTC(e.time)}</span>` +
+      `<div class="ev-params">` +
+        `<span class="ev-param"><span class="epk">Lat</span><span class="epv">${lat}</span></span>` +
+        `<span class="ev-param"><span class="epk">Lon</span><span class="epv">${lon}</span></span>` +
+        `<span class="ev-param"><span class="epk">Dep</span><span class="epv dep">${dep} km</span></span>` +
+        `<span class="ev-param"><span class="epk">Mag</span><span class="epv mag">${mag}</span></span>` +
+        `<span class="ev-param"><span class="epk">Picks</span><span class="epv">${e.n_picks || '—'}</span></span>` +
+      `</div>`;
+    frag.appendChild(row);
+  });
+  body.innerHTML = ''; body.appendChild(frag);
+}
+
+// ── Main update ────────────────────────────────────────────────────────────
+async function _poll() {
+  try {
+    const r = await fetch('/api/online/realtime/pipeline_flow');
+    if (!r.ok) throw new Error(r.status);
+    const d = await r.json();
+
+    const pkRun   = d.picker?.running;
+    const asRun   = d.associator?.running;
+    const anyRun  = pkRun || asRun;
+    const sdsOk   = d.sds?.running;
+    const pkErr   = !!d.picker?.error;
+    const asErr   = !!d.associator?.error;
+
+    // ── Global badge
+    const gb = document.getElementById('pf-global-badge');
+    if (gb) {
+      gb.className = 'pf-status-badge ' + (anyRun ? 'running' : 'stopped');
+      gb.textContent = anyRun ? 'RUNNING' : 'STOPPED';
+    }
+
+    // ── Node SDS
+    _nodeActive('pf-n-sds', sdsOk);
+    _setStatus('pf-s-sds', sdsOk ? 'ok' : 'idle', sdsOk ? 'Active' : 'Inactive');
+    _set('pf-sds-src', d.sds?.src === 'online_sds' ? 'slarchive' : d.sds?.src === 'seiscomp' ? 'SeisComP' : '—');
+    _set('pf-sds-sta', d.sds?.n_stations ?? '—', d.sds?.n_stations > 0 ? 'hi' : 'lo');
+    const pathEl = document.getElementById('pf-sds-path');
+    if (pathEl) {
+      const p = d.sds?.path || '—';
+      pathEl.textContent = p.length > 28 ? '…' + p.slice(-26) : p;
+      pathEl.title = p;
+    }
+
+    // ── Node Picker
+    if (pkErr) {
+      _nodeError('pf-n-picker', true);
+      _setStatus('pf-s-picker', 'err', 'Error');
+    } else {
+      _nodeActive('pf-n-picker', pkRun);
+      const pkSt = pkRun ? 'ok' : (d.picker?.n_cycles > 0 ? 'idle' : 'idle');
+      _setStatus('pf-s-picker', pkSt, pkRun ? 'Running' : 'Stopped');
+    }
+    _set('pf-pk-cyc',  d.picker?.n_cycles ?? '—');
+    _set('pf-pk-tot',  d.picker?.n_picks_total ?? '—', d.picker?.n_picks_total > 0 ? 'hi' : 'lo');
+    const pm = d.picker?.picks_per_min ?? 0;
+    _set('pf-pk-rate', pm, pm > 5 ? 'hi' : pm > 0 ? 'mid' : 'lo');
+    _set('pf-pk-idle', _idleFmt(d.picker?.idle_sec), 'lo');
+
+    // Sparkline data
+    _sparkData.push(pm);
+    if (_sparkData.length > SPARK_MAX) _sparkData.shift();
+    _drawSpark();
+    document.getElementById('pf-spark-now').textContent = pm;
+
+    // ── Node Associator
+    if (asErr) {
+      _nodeError('pf-n-assoc', true);
+      _setStatus('pf-s-assoc', 'err', 'Error');
+    } else {
+      _nodeActive('pf-n-assoc', asRun);
+      _setStatus('pf-s-assoc', asRun ? 'ok' : 'idle', asRun ? 'Running' : 'Stopped');
+    }
+    // The association node label follows the active engine (REAL / GaMMA / PyOcto / glass3)
+    const _bi = _beInfo(d.associator?.backend);
+    const _t = document.getElementById('pf-as-title');   if (_t) _t.textContent = `${_bi.label} Associator`;
+    const _s = document.getElementById('pf-as-subtitle'); if (_s) _s.textContent = _bi.sub;
+    const _fs = document.getElementById('pf-flow-sub');
+    if (_fs) _fs.textContent = `Alur realtime: SDS → PhaseNet → ${_bi.label} → NLLoc → Events`;
+    _set('pf-as-cyc',  d.associator?.n_cycles ?? '—');
+    _set('pf-as-tot',  d.associator?.n_events_total ?? '—', d.associator?.n_events_total > 0 ? 'hi' : 'lo');
+    _set('pf-as-nll',  d.associator?.nlloc_active ? '✓ active' : '— off', d.associator?.nlloc_active ? 'hi' : 'lo');
+    _set('pf-as-idle', _idleFmt(d.associator?.idle_sec), 'lo');
+
+    // ── Node Events
+    const nEv = d.events?.n_total ?? 0;
+    _nodeActive('pf-n-events', nEv > 0 && asRun);
+    _setStatus('pf-s-events', nEv > 0 ? 'ok' : 'idle', nEv > 0 ? `${nEv} event` : 'Empty');
+    _set('pf-ev-tot', nEv, nEv > 0 ? 'hi' : 'lo');
+    const lastEv = (d.events?.list || [])[0];
+    if (lastEv) {
+      document.getElementById('pf-ev-last').textContent = _fmtISOUTC(lastEv.time);
+      document.getElementById('pf-ev-mag').textContent  =
+        lastEv.mag != null ? `ML ${Number(lastEv.mag).toFixed(1)}` : '—';
+    }
+
+    // ── Connectors
+    _connActive('pf-c1', sdsOk && pkRun);
+    _connActive('pf-c2', pkRun && asRun);
+    _connActive('pf-c3', asRun && nEv > 0);
+
+    // ── Engine log
+    _renderLog(d.engine_log || [], d.associator?.backend);
+
+    // ── Events list
+    _renderEvents(d.events?.list || []);
+
+    // ── Sub note
+    const note = document.getElementById('pf-sub-note');
+    if (note && d.associator?.assoc_log_last?.msg) {
+      note.textContent = '↳ ' + d.associator.assoc_log_last.msg;
+    }
+
+  } catch(e) {
+    console.warn('pipeline_flow poll error:', e);
+  }
+}
+
+// ── Station grid ───────────────────────────────────────────────────────────
+let _selSta = null;
+let _lastStations = [];
+let _staThrP = 0.3, _staThrS = 0.6;
+
+function _agoFmt(sec) {
+  if (sec == null) return '—';
+  if (sec < 5)    return `${sec.toFixed(1)}s`;
+  if (sec < 60)   return `${Math.round(sec)}s`;
+  if (sec < 3600) return `${Math.floor(sec/60)}m${Math.round(sec%60)}s`;
+  return '—';
+}
+
+function _renderStations(stations, now, nCfg) {
+  const grid = document.getElementById('pf-sta-grid');
+  if (!grid) return;
+
+  document.getElementById('pf-sta-cnt').textContent = stations.length;
+  const subEl = document.getElementById('pf-sta-sub');
+  const nData = stations.filter(s => s.has_data).length;
+  const nPick = stations.filter(s => s.n_picks > 0).length;
+  if (subEl) subEl.textContent = `· ${nData} with data · ${nPick} with active picks`;
+
+  if (!stations.length) {
+    grid.innerHTML = '<div class="pf-empty" style="padding:1rem 0">No stations</div>'; return;
+  }
+
+  // Auto-select the newest station (with picks) at first
+  if (!_selSta) {
+    const withPick = stations.find(s => s.n_picks > 0);
+    _selSta = (withPick || stations[0]).key;
+  }
+
+  const frag = document.createDocumentFragment();
+  stations.forEach(s => {
+    const lastAny = Math.max(s.last_p || 0, s.last_s || 0);
+    const ageSec  = lastAny ? now - lastAny : null;
+    let freshCls;
+    if (!s.has_data)               freshCls = 'nodata';
+    else if (ageSec == null)       freshCls = 'stale';
+    else if (ageSec < 30)          freshCls = 'fresh';
+    else if (ageSec < 120)         freshCls = 'recent';
+    else                           freshCls = 'stale';
+
+    const card = document.createElement('div');
+    card.className = `sta-card ${freshCls}${s.key === _selSta ? ' selected' : ''}`;
+    card.dataset.key = s.key;
+    card.onclick = () => { _selSta = s.key; _renderStations(stations, now, nCfg); _fetchWaveform(s.key); };
+
+    const pAgo   = s.last_p ? _agoFmt(now - s.last_p) : '—';
+    const sAgo   = s.last_s ? _agoFmt(now - s.last_s) : '—';
+    const pScore = s.score_p != null ? `${(s.score_p*100).toFixed(0)}%` : '';
+    const sScore = s.score_s != null ? `${(s.score_s*100).toFixed(0)}%` : '';
+
+    card.innerHTML =
+      `<div class="sta-name">${_esc(s.sta)}</div>` +
+      `<div class="sta-cha">${_esc(s.net)}·${_esc(s.cha || (s.has_data ? '?' : '—'))}</div>` +
+      (s.has_data
+        ? `<div class="sta-picks">` +
+            `<div class="sta-pick-row"><span class="sta-ph P">P</span><span class="sta-ago">${pAgo}</span><span class="sta-score">${pScore}</span></div>` +
+            `<div class="sta-pick-row"><span class="sta-ph S">S</span><span class="sta-ago">${sAgo}</span><span class="sta-score">${sScore}</span></div>` +
+          `</div>`
+        : `<div style="font-size:.58rem;color:var(--text-muted);margin-top:.15rem">no stream</div>`
+      );
+    frag.appendChild(card);
+  });
+  grid.innerHTML = ''; grid.appendChild(frag);
+}
+
+// ── Picker waveform + probability simulation canvas ─────────────────────────
+let _wvData = null;
+let _winAnimT = null;   // window animation start time (epoch seconds)
+
+async function _fetchWaveform(staKey) {
+  try {
+    const r = await fetch(`/api/online/realtime/picker_stations?sta=${encodeURIComponent(staKey)}`);
+    if (!r.ok) return;
+    const d = await r.json();
+    if (d.thresholds) { _staThrP = d.thresholds.p; _staThrS = d.thresholds.s; }
+    if (d.waveform) {
+      _wvData = d.waveform;
+      _winAnimT = null;
+      _drawPickerWaveform();
+    }
+  } catch(e) { console.warn('waveform fetch error', e); }
+}
+
+function _fmtAmp(v) {
+  if (v >= 1e6) return (v/1e6).toFixed(1)+'M';
+  if (v >= 1e3) return (v/1e3).toFixed(1)+'k';
+  return Math.round(v).toString();
+}
+
+// Ported from the online waveform-canvas-render.js::_drawMinMaxTrace — two modes so
+// the picker view MATCHES the online waveform (no connector lines, correct shape).
+function _drawWfTrace(ctx, t, vArr, toX, toY, pw) {
+  if (t.length < 2) return;
+  const dts = [];
+  for (let i = 1; i < t.length; i++) dts.push(t[i] - t[i - 1]);
+  dts.sort((a, b) => a - b);
+  const medDt    = dts[dts.length >> 1] || 1;
+  const pxPerSec = pw / ((t[t.length - 1] - t[0]) || 1);
+  const maxGapPx = Math.max(medDt * 8 * pxPerSec, 4);
+  const density  = t.length / pw;   // sampel per pixel
+
+  // ── SPARSE: direct polyline (breaks on forward gaps / backward jumps) ────────
+  if (density < 1.5) {
+    ctx.beginPath();
+    let started = false, prevX = null;
+    for (let i = 0; i < t.length; i++) {
+      const x = toX(t[i]), y = toY(vArr[i]);
+      const gap = prevX !== null && ((x - prevX) > maxGapPx || x < prevX - 1);
+      if (gap || !started) { ctx.moveTo(x, y); started = true; }
+      else ctx.lineTo(x, y);
+      prevX = x;
+    }
+    ctx.strokeStyle = '#0891b2'; ctx.lineWidth = 1.2; ctx.lineJoin = 'round'; ctx.stroke();
+    return;
+  }
+
+  // ── DENSE: filled envelope (min forward + max backward per pixel) ───────────
+  const cols = new Map(), order = [];
+  for (let i = 0; i < t.length; i++) {
+    const x = Math.round(toX(t[i])), y = toY(vArr[i]);
+    if (!cols.has(x)) { cols.set(x, { min: y, max: y }); order.push(x); }
+    else { const c = cols.get(x); if (y < c.min) c.min = y; if (y > c.max) c.max = y; }
+  }
+  if (!order.length) return;
+  const flush = (from, to) => {
+    if (from > to) return;
+    if (from === to) {
+      const x = order[from], c = cols.get(x);
+      ctx.beginPath(); ctx.moveTo(x, c.min); ctx.lineTo(x, c.max); ctx.stroke();
+      return;
+    }
+    ctx.beginPath();
+    for (let ci = from; ci <= to; ci++) {
+      const x = order[ci], c = cols.get(x);
+      ci === from ? ctx.moveTo(x, c.min) : ctx.lineTo(x, c.min);
+    }
+    for (let ci = to; ci >= from; ci--) ctx.lineTo(order[ci], cols.get(order[ci]).max);
+    ctx.closePath(); ctx.fill();
+  };
+  ctx.fillStyle = 'rgba(8,145,178,.85)'; ctx.strokeStyle = 'rgba(8,145,178,.85)';
+  ctx.lineWidth = 1;
+  let seg = 0;
+  for (let ci = 1; ci < order.length; ci++) {
+    if ((order[ci] - order[ci - 1]) > maxGapPx) { flush(seg, ci - 1); seg = ci; }
+  }
+  flush(seg, order.length - 1);
+}
+
+function _drawPickerWaveform() {
+  const canvas = document.getElementById('pf-wv-canvas');
+  if (!canvas || !_wvData) return;
+
+  const W   = canvas.parentElement.clientWidth - 12;
+  const PAD_L = 42, PAD_R = 8;
+  const pw    = W - PAD_L - PAD_R;
+
+  // Panel heights
+  const WH  = 120;   // waveform panel
+  const PH  = 80;    // probability panel
+  const AH  = 20;    // time axis
+  const SEP = 6;     // separator
+  const H   = WH + SEP + PH + AH;
+
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width  = W * dpr; canvas.height = H * dpr;
+  canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  const { t, v, picks, prob, t0, t1, sta, cha, sr, thresholds, window_s } = _wvData;
+  const thr_p  = thresholds?.p ?? _staThrP;
+  const thr_s  = thresholds?.s ?? _staThrS;
+  const winLen = window_s || 30;
+  const span   = t1 - t0;
+  if (!span || !t.length) return;
+
+  const toX  = ep => PAD_L + (ep - t0) / span * pw;
+
+  // ── Panel 1: Waveform ──────────────────────────────────────────────────────
+  const W_TOP = 8, W_BOT = 0;
+  const wfH   = WH - W_TOP - W_BOT;
+  const vArr  = v.map(Number);
+  // Demean + scale by max deviation (SAME as online _drawMinMaxTrace) so a DC
+  // offset does not shift the trace off the row center.
+  const wfMean = vArr.reduce((s, x) => s + x, 0) / vArr.length;
+  const wfAmp  = vArr.reduce((m, x) => Math.max(m, Math.abs(x - wfMean)), 0) || 1;
+  const midWF  = W_TOP + wfH / 2;
+  const toYwf  = val => midWF - ((val - wfMean) / wfAmp) * (wfH / 2 - 2);
+
+  ctx.fillStyle = '#f8fafc'; ctx.fillRect(0, 0, W, WH);
+
+  // sliding window indicator
+  const nowEp = t1;
+  if (_winAnimT === null) _winAnimT = nowEp - winLen;
+  const winStart = _winAnimT;
+  const winEnd   = winStart + winLen;
+  const wxS = Math.max(toX(winStart), PAD_L);
+  const wxE = Math.min(toX(winEnd),   W - PAD_R);
+  if (wxE > wxS) {
+    ctx.fillStyle = 'rgba(217,119,6,.06)';
+    ctx.fillRect(wxS, W_TOP, wxE - wxS, wfH);
+    ctx.strokeStyle = 'rgba(217,119,6,.4)'; ctx.lineWidth = 1;
+    ctx.setLineDash([4, 3]);
+    ctx.strokeRect(wxS, W_TOP, wxE - wxS, wfH);
+    ctx.setLineDash([]);
+  }
+
+  // Grid lines
+  const gridStep = span <= 30 ? 5 : 10;
+  ctx.strokeStyle = 'rgba(0,0,0,.06)'; ctx.lineWidth = .5;
+  for (let gt = Math.ceil(t0/gridStep)*gridStep; gt <= t1; gt += gridStep) {
+    const x = toX(gt);
+    ctx.beginPath(); ctx.moveTo(x, W_TOP); ctx.lineTo(x, WH); ctx.stroke();
+  }
+  // Zero line
+  ctx.strokeStyle = 'rgba(0,0,0,.1)'; ctx.lineWidth = .7;
+  ctx.beginPath(); ctx.moveTo(PAD_L, midWF); ctx.lineTo(W-PAD_R, midWF); ctx.stroke();
+
+  // Waveform trace — the SAME method as online (waveform-canvas-render.js
+  // _drawMinMaxTrace): SPARSE (<1.5 samples/px) = a direct polyline that BREAKS on
+  // gaps/backward jumps (no "connector line"); DENSE (≥1.5 samples/px) =
+  // a filled min/max envelope per pixel. The live picker (native sr) is usually dense.
+  _drawWfTrace(ctx, t, vArr, toX, toYwf, pw);
+
+  // P/S pick markers
+  picks.forEach(pk => {
+    const x = toX(pk.t);
+    if (x < PAD_L || x > W-PAD_R) return;
+    const isP = String(pk.phase).toUpperCase().startsWith('P');
+    ctx.strokeStyle = isP ? 'rgba(220,38,38,.85)' : 'rgba(37,99,235,.85)';
+    ctx.lineWidth = 1.5; ctx.setLineDash(isP ? [] : [3,3]);
+    ctx.beginPath(); ctx.moveTo(x, W_TOP); ctx.lineTo(x, WH); ctx.stroke();
+    ctx.setLineDash([]);
+    if (pk.score != null) {
+      ctx.fillStyle = isP ? '#dc2626' : '#2563eb';
+      ctx.font = 'bold 8px monospace'; ctx.textAlign = 'center';
+      ctx.fillText(`${isP?'P':'S'}${(pk.score*100).toFixed(0)}%`, x, W_TOP+8);
+    }
+  });
+
+  // Garis now
+  ctx.strokeStyle='rgba(22,163,74,.6)'; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(toX(t1), W_TOP); ctx.lineTo(toX(t1), WH); ctx.stroke();
+
+  // Label amplitudo
+  ctx.fillStyle='rgba(100,116,139,.9)'; ctx.font='7px monospace'; ctx.textAlign='right';
+  ctx.fillText(`+${_fmtAmp(vMax)}`, PAD_L-2, W_TOP+8);
+  ctx.fillText(`−${_fmtAmp(vMax)}`, PAD_L-2, WH-2);
+
+  // Station label
+  ctx.fillStyle='#475569'; ctx.font='bold 9px monospace'; ctx.textAlign='left';
+  ctx.fillText(`${sta.split('.').pop() || sta}  ${cha}  ${sr}sps`, PAD_L+3, W_TOP+9);
+
+  // Label "WAVEFORM"
+  ctx.fillStyle='rgba(148,163,184,.7)'; ctx.font='7px monospace'; ctx.textAlign='right';
+  ctx.fillText('WAVEFORM', W-PAD_R-2, W_TOP+8);
+
+  // ── Separator ─────────────────────────────────────────────────────────────
+  ctx.fillStyle = 'var(--text-main)'; ctx.fillRect(0, WH, W, SEP);
+  ctx.strokeStyle='rgba(0,0,0,.06)'; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(PAD_L, WH+SEP/2); ctx.lineTo(W-PAD_R, WH+SEP/2); ctx.stroke();
+
+  // ── Panel 2: Probability simulation ───────────────────────────────────────
+  const pYOff = WH + SEP;
+  const pTop  = 8;
+  const pBot  = 4;
+  const probH = PH - pTop - pBot;
+
+  ctx.fillStyle = '#f0f4f8'; ctx.fillRect(0, pYOff, W, PH);
+
+  // Grid prob (horizontal 0, 0.5, 1.0)
+  [0, 0.5, 1.0].forEach(yv => {
+    const y = pYOff + pTop + probH - yv * probH;
+    ctx.strokeStyle = yv === 0 ? 'rgba(0,0,0,.08)' : 'rgba(0,0,0,.05)';
+    ctx.lineWidth = .5;
+    ctx.beginPath(); ctx.moveTo(PAD_L, y); ctx.lineTo(W-PAD_R, y); ctx.stroke();
+    if (yv > 0) {
+      ctx.fillStyle='rgba(100,116,139,.7)'; ctx.font='6px monospace'; ctx.textAlign='right';
+      ctx.fillText(yv.toFixed(1), PAD_L-2, y+3);
+    }
+  });
+
+  const toYprob = pv => pYOff + pTop + probH - Math.min(1, pv) * probH;
+
+  if (prob && prob.t && prob.t.length > 1) {
+    // Kurva P (merah)
+    const fillP = ctx.createLinearGradient(0, pYOff, 0, pYOff+PH);
+    fillP.addColorStop(0, 'rgba(220,38,38,.25)'); fillP.addColorStop(1, 'rgba(220,38,38,.02)');
+    ctx.beginPath();
+    ctx.moveTo(toX(prob.t[0]), toYprob(0));
+    prob.t.forEach((tp,i) => ctx.lineTo(toX(tp), toYprob(prob.p[i])));
+    ctx.lineTo(toX(prob.t[prob.t.length-1]), toYprob(0));
+    ctx.closePath(); ctx.fillStyle = fillP; ctx.fill();
+    ctx.beginPath();
+    prob.t.forEach((tp,i) => { const x=toX(tp),y=toYprob(prob.p[i]); i===0?ctx.moveTo(x,y):ctx.lineTo(x,y); });
+    ctx.strokeStyle='rgba(220,38,38,.85)'; ctx.lineWidth=1.4; ctx.lineJoin='round'; ctx.stroke();
+
+    // Kurva S (biru)
+    const fillS = ctx.createLinearGradient(0, pYOff, 0, pYOff+PH);
+    fillS.addColorStop(0, 'rgba(37,99,235,.2)'); fillS.addColorStop(1, 'rgba(37,99,235,.02)');
+    ctx.beginPath();
+    ctx.moveTo(toX(prob.t[0]), toYprob(0));
+    prob.t.forEach((tp,i) => ctx.lineTo(toX(tp), toYprob(prob.s[i])));
+    ctx.lineTo(toX(prob.t[prob.t.length-1]), toYprob(0));
+    ctx.closePath(); ctx.fillStyle = fillS; ctx.fill();
+    ctx.beginPath();
+    prob.t.forEach((tp,i) => { const x=toX(tp),y=toYprob(prob.s[i]); i===0?ctx.moveTo(x,y):ctx.lineTo(x,y); });
+    ctx.strokeStyle='rgba(37,99,235,.85)'; ctx.lineWidth=1.4; ctx.lineJoin='round'; ctx.stroke();
+  }
+
+  // Threshold P
+  const thrPy = toYprob(thr_p);
+  ctx.strokeStyle='rgba(220,38,38,.6)'; ctx.lineWidth=1; ctx.setLineDash([5,3]);
+  ctx.beginPath(); ctx.moveTo(PAD_L, thrPy); ctx.lineTo(W-PAD_R, thrPy); ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle='rgba(220,38,38,.8)'; ctx.font='bold 7px monospace'; ctx.textAlign='left';
+  ctx.fillText(`thr-P ${thr_p.toFixed(2)}`, PAD_L+3, thrPy-2);
+
+  // Threshold S
+  const thrSy = toYprob(thr_s);
+  ctx.strokeStyle='rgba(37,99,235,.6)'; ctx.lineWidth=1; ctx.setLineDash([5,3]);
+  ctx.beginPath(); ctx.moveTo(PAD_L, thrSy); ctx.lineTo(W-PAD_R, thrSy); ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle='rgba(37,99,235,.8)'; ctx.font='bold 7px monospace'; ctx.textAlign='left';
+  ctx.fillText(`thr-S ${thr_s.toFixed(2)}`, PAD_L+3, thrSy-2);
+
+  // Pick markers di prob panel
+  picks.forEach(pk => {
+    const x = toX(pk.t);
+    if (x < PAD_L || x > W-PAD_R) return;
+    const isP = String(pk.phase).toUpperCase().startsWith('P');
+    ctx.strokeStyle = isP ? 'rgba(220,38,38,.45)' : 'rgba(37,99,235,.45)';
+    ctx.lineWidth = 1; ctx.setLineDash([2,2]);
+    ctx.beginPath(); ctx.moveTo(x, pYOff+pTop); ctx.lineTo(x, pYOff+PH-pBot); ctx.stroke();
+    ctx.setLineDash([]);
+  });
+
+  // Label "PROBABILITAS"
+  ctx.fillStyle='rgba(148,163,184,.7)'; ctx.font='7px monospace'; ctx.textAlign='right';
+  ctx.fillText('PROBABILITAS (sim)', W-PAD_R-2, pYOff+pTop+8);
+
+  // Sliding window di prob panel
+  if (wxE > wxS) {
+    ctx.fillStyle='rgba(217,119,6,.05)';
+    ctx.fillRect(wxS, pYOff+pTop, wxE-wxS, probH);
+    ctx.fillStyle='rgba(217,119,6,.5)'; ctx.font='7px monospace'; ctx.textAlign='center';
+    const midWin = (wxS+wxE)/2;
+    if (wxE-wxS > 20) ctx.fillText(`${winLen}s window`, midWin, pYOff+pTop+10);
+  }
+
+  // ── Time axis ─────────────────────────────────────────────────────────────
+  const axY = pYOff + PH;
+  ctx.fillStyle='var(--text-main)'; ctx.fillRect(0, axY, W, AH);
+  ctx.fillStyle='rgba(71,85,105,.8)'; ctx.font='8px monospace'; ctx.textAlign='center';
+  for (let gt = Math.ceil(t0/10)*10; gt <= t1; gt += 10) {
+    const x = toX(gt);
+    if (x < PAD_L+10 || x > W-PAD_R-10) continue;
+    ctx.strokeStyle='rgba(71,85,105,.3)'; ctx.lineWidth=.5;
+    ctx.beginPath(); ctx.moveTo(x, axY); ctx.lineTo(x, axY+3); ctx.stroke();
+    const d = new Date(gt*1000);
+    const _p = n => String(n).padStart(2,'0');
+    ctx.fillText(`${_p(d.getUTCHours())}:${_p(d.getUTCMinutes())}:${_p(d.getUTCSeconds())}`, x, axY+AH-3);
+  }
+  ctx.fillStyle='rgba(71,85,105,.5)'; ctx.textAlign='left';
+  ctx.fillText('UTC', 2, axY+AH-3);
+
+  // Update threshold badges
+  const thrP = document.getElementById('pf-thr-p');
+  const thrS = document.getElementById('pf-thr-s');
+  if (thrP) thrP.textContent = `P≥${thr_p.toFixed(2)}`;
+  if (thrS) thrS.textContent = `S≥${thr_s.toFixed(2)}`;
+
+  // Update header
+  const nameEl = document.getElementById('pf-wv-staname');
+  if (nameEl) nameEl.textContent = `${sta.split('.').pop() || sta}`;
+  const infoEl = document.getElementById('pf-wv-info');
+  if (infoEl) infoEl.textContent = `${picks.length} pick · ${t.length} pts`;
+}
+
+// Sliding-window animation — moves right every 100 ms (real-time)
+setInterval(() => {
+  if (!_wvData) return;
+  const { t0, t1, window_s } = _wvData;
+  const winLen = window_s || 30;
+  if (_winAnimT === null) _winAnimT = t0;
+  const step = (t1 - t0) / 600;   // 600 frames for 60 s = ~1 px/frame
+  _winAnimT = _winAnimT + step * 0.5;
+  if (_winAnimT + winLen > t1) _winAnimT = t0;
+  _drawPickerWaveform();
+}, 150);
+
+// ── Station poll (every 3 s) ────────────────────────────────────────────────
+async function _pollStations() {
+  try {
+    const r = await fetch('/api/online/realtime/picker_stations');
+    if (!r.ok) return;
+    const d = await r.json();
+    _lastStations = d.stations || [];
+    if (d.thresholds) { _staThrP = d.thresholds.p; _staThrS = d.thresholds.s; }
+    _renderStations(_lastStations, d.now, d.n_configured);
+
+    // Auto-refresh the selected station waveform
+    if (_selSta) _fetchWaveform(_selSta);
+  } catch(e) { console.warn('stations poll error', e); }
+}
+
+// Start polling
+_poll();
+_pollStations();
+setInterval(_poll, POLL_MS);
+setInterval(_pollStations, 3000);
+
+// Redraw on resize
+window.addEventListener('resize', () => { _drawSpark(); _drawPickerWaveform(); });
+</script>
+</body>
+</html>

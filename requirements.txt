@@ -1,0 +1,24 @@
+pyyaml>=6.0
+numpy>=1.24
+pandas>=2.0
+scipy>=1.10
+obspy>=1.4
+matplotlib>=3.7
+cartopy>=0.21
+pyproj>=3.5
+tqdm>=4.65
+psutil>=5.9
+# Slab2 auto-contour (Result Viewer 2D/3D map)
+xarray>=2023.1
+netCDF4>=1.6
+beautifulsoup4>=4.11
+# Web GUI
+flask>=3.0
+requests>=2.28
+# Native desktop window for `seiswork gui --native` (uses the OS WebView —
+# WKWebView on macOS, WebKitGTK on Linux). Optional: the GUI falls back to the
+# browser if this is missing. Linux also needs system WebKitGTK libs at runtime.
+pywebview>=5.0
+# Optional (for GaMMA association)
+# gamma
+# tensorflow>=2.10  (for PhaseNet GPU)

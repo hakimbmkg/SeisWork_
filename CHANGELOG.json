@@ -1,0 +1,16 @@
+{
+  "current": "0.0.1(BETA)",
+  "disclaimer": "SeisWork is still under active testing (beta). Every result it produces must be independently re-verified and cross-checked against the original reference implementation of each method before being treated as accurate.",
+  "entries": [
+    {
+      "version": "0.0.1(BETA)",
+      "date": "2026-07-02",
+      "changes": [
+        "Added multi-SeedLink support for online sessions (multiple servers + inventories per session)",
+        "Added an EN/ID language toggle to the web GUI",
+        "Added a Docker image bundling the core binaries for cross-OS use",
+        "Unified all version strings on 0.0.1(BETA)"
+      ]
+    }
+  ]
+}

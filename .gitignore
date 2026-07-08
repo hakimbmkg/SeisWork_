@@ -1,0 +1,63 @@
+# Vendored / built dependencies (fetched & compiled by install.sh)
+core/*
+# ── but ship VELEST + Hypoinverse SOURCE (compiled by install.sh step 3) ──
+!core/src
+core/src/*
+!core/src/velest
+!core/src/hypo71
+# VELEST: source only (not the compiled binary / object files)
+core/src/velest/*
+!core/src/velest/velest.f
+!core/src/velest/vel_com.f
+!core/src/velest/README
+!core/src/velest/regionskoord.dat
+!core/src/velest/regionsnamen.dat
+# Hypoinverse: source only (core/src/hypo71/source → hyp1.40)
+core/src/hypo71/*
+!core/src/hypo71/source
+core/src/hypo71/source/*
+!core/src/hypo71/source/*.f
+!core/src/hypo71/source/*.for
+!core/src/hypo71/source/*.inc
+!core/src/hypo71/source/makefile
+
+# Working data, run logs, and results
+work/
+skenario1/
+*.log
+
+# Docker: only the phasenet picker image (used by install.sh step7) and the
+# corebin image (used by install.sh step 3b, the native-compile fallback)
+# ship on GitHub — the legacy multi-OS Dockerfile variants/scripts predate
+# install.sh and aren't referenced by anything; kept local only.
+docker/*
+!docker/phasenet
+!docker/Dockerfile.corebin
+!docker/corebin-build-inside.sh
+!docker/corebin-entrypoint.sh
+!docker/build_corebin.sh
+
+# Internal one-off maintenance/data-fix scripts (kept local, not pushed)
+tools/
+
+# Web GUI session data (picking jobs, pipeline jobs, saved configs, tmp files)
+seiswork/web/tmp/
+seiswork/web/configs/
+
+# Documentation (PDF/HTML kept local)
+docs/
+
+# Notebooks and test code (kept local, not pushed)
+notebooks/
+test_seiswork.py
+
+# Python artifacts
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.pytest_cache/
+
+# DEM cache files (auto-generated from SRTM/GEBCO on first use)
+seiswork/web/footages/dem/*.npz

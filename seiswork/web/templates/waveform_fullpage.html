@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>SeisWork — Waveform &amp; Spectrogram</title>
+  <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='img/seiswork-wave.svg') }}"/>
+  <script src="{{ url_for('static', filename='js/native-bridge.js') }}"></script>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/bootstrap-icons.min.css') }}"/>
+  <style>
+    /* Theme follows the OS (dark default, light via media query). The waveform
+       plot canvas keeps its own light "seismogram paper" surface in both. */
+    :root {
+      --bg: #0f1420; --text: #e0e6f0; --muted: #8898aa; --strong: #ffffff;
+      --surface: #1a1e2e; --border: #2d3555; --btn: #232840; --btn-hover: #2d3555;
+    }
+    @media (prefers-color-scheme: light) {
+      :root {
+        --bg: #f8fafc; --text: #374151; --muted: #64748b; --strong: #111827;
+        --surface: #ffffff; --border: #cbd5e1; --btn: #ffffff; --btn-hover: #f1f5f9;
+      }
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; background: var(--bg); color: var(--text);
+      font-family: 'Segoe UI', system-ui, sans-serif; overflow: hidden; }
+    body { display: flex; flex-direction: column; }
+    /* ── Brand header — follows OS theme, matching the main app's navbar ── */
+    #wf-brandbar {
+      height: 50px; flex-shrink: 0; display: flex; align-items: center; padding: 0 1rem; gap: .75rem;
+      background: var(--surface); border-bottom: 1px solid var(--border);
+    }
+    #wf-brand-logo { font-size: 1.2rem; font-weight: 700; letter-spacing: 1px; color: var(--strong); }
+    #wf-brand-logo span { color: #e8531a; }
+    #wf-brand-badge { background: #e8531a; color: #fff; font-size: .62rem; padding: 2px 7px; border-radius: 3px; font-weight: 700; }
+    #wf-brand-tag { font-size: .7rem; color: var(--muted); white-space: nowrap; }
+    #wf-topbar {
+      height: 36px; display: flex; align-items: center; gap: .6rem; padding: 0 .8rem;
+      background: var(--surface); color: var(--text); flex-shrink: 0; font-size: .8rem;
+      border-bottom: 1px solid var(--border);
+    }
+    #wf-status { font-size: .74rem; color: var(--muted); }
+    .wf-btn {
+      display: inline-flex; align-items: center; gap: .3rem; padding: .2rem .55rem;
+      border: 1px solid var(--border); border-radius: 4px; background: var(--btn);
+      color: var(--text); cursor: pointer; font-size: .73rem; text-decoration: none;
+    }
+    .wf-btn:hover { background: var(--btn-hover); }
+    .wf-btn i { font-size: .78rem; }
+    #wf-topbar .ml-auto { margin-left: auto; display: flex; gap: .35rem; align-items: center; }
+    #wf-plot { position: relative; flex: 1; overflow-y: auto; }
+    #wf-plot canvas { display: block; width: 100%; }
+    #wf-axis { flex-shrink: 0; height: 30px; display: block; width: 100%; border-top: 1px solid var(--border); }
+    #wf-loading {
+      position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+      background: var(--bg); color: var(--muted); font-size: .85rem; gap: .4rem;
+    }
+  </style>
+</head>
+<body>
+  <div id="wf-brandbar">
+    <div id="wf-brand-logo">Seis<span>Work</span></div>
+    <div id="wf-brand-badge" title="Running code version">v{{ version }}</div>
+    <div id="wf-brand-tag">Simple Seismological Data Processing Framework &nbsp;·&nbsp; by HakimBMKG</div>
+  </div>
+  <div id="wf-topbar">
+    <span>Waveform &amp; Spectrogram — full page</span>
+    <span id="wf-status">Loading…</span>
+    <div class="ml-auto">
+      <label class="wf-btn" style="gap:.3rem" title="Show the DeepDenoiser-cleaned waveform (visible rows, on-demand)">
+        <input type="checkbox" id="wf-denoise-tog"> Denoise
+        <span id="wf-denoise-status" style="color:var(--muted);font-size:.62rem"></span>
+      </label>
+      <label class="wf-btn" style="gap:.3rem" title="Show / hide the spectrogram strip">
+        <input type="checkbox" id="wf-spec-tog" checked> Spectrogram
+      </label>
+      <button class="wf-btn" onclick="window.close()" title="Close">
+        <i class="bi bi-x-lg"></i>
+      </button>
+    </div>
+  </div>
+  <div id="wf-plot">
+    <canvas id="wf-canvas"></canvas>
+    <div id="wf-loading">⏳ Loading waveform data…</div>
+  </div>
+  <canvas id="wf-axis"></canvas>
+
+  <script src="{{ url_for('static', filename='js/modules/waveform-canvas-render.js') }}?v={{ asset_version }}"></script>
+  <script src="{{ url_for('static', filename='js/modules/waveform-fullpage.js') }}?v={{ asset_version }}"></script>
+</body>
+</html>

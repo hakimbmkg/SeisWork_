@@ -1,0 +1,35 @@
+# Exclude from Docker build context
+work/
+docs/*.pdf
+
+# core/ is fetched & compiled by install.sh — but ship VELEST + Hypoinverse
+# SOURCE so step 3 can compile them inside the container (mirrors .gitignore).
+core/*
+!core/src
+core/src/*
+!core/src/velest
+!core/src/hypo71
+!core/src/simul2000
+# velest: source only (drop prebuilt binary)
+core/src/velest/velest
+# simul2000: source only (drop prebuilt binary)
+core/src/simul2000/simul2000
+# hypoinverse: source only (drop objects, binaries, docs, test data)
+core/src/hypo71/source/*.o
+core/src/hypo71/source/hyp1.40
+core/src/hypo71/source/p2sdly
+core/src/hypo71/hyp71
+core/src/hypo71/testone
+
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+.git/
+*.egg-info/
+.pytest_cache/
+docker/results/
+
+# Internal one-off maintenance/data-fix scripts — not part of the shipped
+# image (mirrors .gitignore; these Dockerfiles COPY . . from repo root).
+tools/
