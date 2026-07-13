@@ -1,0 +1,1179 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>SeisWork — Peta Katalog Gempa</title>
+  <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='img/seiswork-event.svg') }}"/>
+  <script src="{{ url_for('static', filename='js/native-bridge.js') }}"></script>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/leaflet-1.9.4.min.css') }}"/>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/bootstrap-icons.min.css') }}"/>
+  <style>
+    /* ── Reset & base ── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; overflow: hidden; }
+    body {
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      background: var(--bg); color: var(--text-main);
+      display: flex; flex-direction: column;
+    }
+
+    /* ── Theme follows the OS (dark default, light via media query) ── */
+    :root {
+      --accent2   : #2196f3;
+      --bg        : #0f172a;   /* app background */
+      --bg-card   : #1e2740;   /* layer control base */
+      --surface2  : #1e2740;   /* topbar, panels, popups, tooltips */
+      --surface3  : #0c1a30;   /* reloc bar */
+      --surface-hover: #2d3f5f;
+      --text-main : #e0e6f0;
+      --text-muted: #8898aa;
+      --strong    : #ffffff;
+      --border    : #2d3555;
+    }
+    @media (prefers-color-scheme: light) {
+      :root {
+        --bg        : #f8fafc;
+        --bg-card   : #ffffff;
+        --surface2  : #ffffff;
+        --surface3  : #eef2f7;
+        --surface-hover: #e2e8f0;
+        --text-main : #1e293b;
+        --text-muted: #64748b;
+        --strong    : #111827;
+        --border    : #cbd5e1;
+      }
+    }
+    .layer-control { position: absolute; top: 10px; left: 10px; z-index: 500; pointer-events: auto; }
+    .layer-toggle {
+      width: 32px; height: 32px;
+      background: var(--bg-card); border: 1px solid var(--border); border-radius: 5px;
+      display: flex; align-items: center; justify-content: center;
+      cursor: pointer; color: var(--text-muted); font-size: .95rem;
+      transition: color .15s, border-color .15s; user-select: none;
+    }
+    .layer-toggle:hover, .layer-toggle.open { color: var(--accent2); border-color: var(--accent2); }
+    .layer-panel {
+      position: absolute; top: 0; left: 38px;
+      background: var(--bg-card); border: 1px solid var(--border); border-radius: 7px;
+      padding: 6px 0; min-width: 210px;
+      box-shadow: 0 4px 20px rgba(0,0,0,.5);
+      display: none; z-index: 2000;
+    }
+    .layer-panel.open { display: block; }
+    .layer-sec-title {
+      font-size: .63rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: .6px; color: var(--text-muted);
+      padding: .3rem .8rem .15rem;
+    }
+    .layer-opt {
+      display: flex; align-items: center; gap: .5rem;
+      padding: .32rem .8rem; font-size: .77rem;
+      cursor: pointer; color: var(--text-muted);
+      transition: background .12s, color .12s; user-select: none;
+    }
+    .layer-opt:hover { background: rgba(255,255,255,.05); color: var(--text-main); }
+    .layer-opt.active { color: var(--text-main); }
+    .radio-dot {
+      width: 9px; height: 9px; border-radius: 50%;
+      border: 2px solid var(--border); flex-shrink: 0;
+      transition: border-color .12s, background .12s;
+    }
+    .layer-opt.active .radio-dot { border-color: var(--accent2); background: var(--accent2); }
+    .chk-box {
+      width: 13px; height: 13px; border-radius: 3px;
+      border: 1.5px solid var(--border); flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center;
+      font-size: .6rem; transition: border-color .12s, background .12s;
+    }
+    .layer-opt.active .chk-box { border-color: var(--accent2); background: var(--accent2); color: #fff; }
+
+    /* ── Compass ── */
+    .map-compass { position: absolute; width: 38px; height: 38px; z-index: 650; pointer-events: none; }
+    .map-compass.mc-br { bottom: 30px; right: 10px; }
+
+    /* ── Tooltip (GeoJSON layers) ── */
+    .sw-tooltip { background: var(--surface2) !important; border: 1px solid var(--border) !important;
+      color: var(--text-main) !important; font-size: .72rem; }
+
+    /* ── Top bar ── */
+    #cm-topbar {
+      height: 40px; display: flex; align-items: center; gap: .6rem;
+      padding: 0 .8rem; background: var(--surface2); border-bottom: 1px solid var(--border);
+      flex-shrink: 0; font-size: .8rem;
+    }
+    #cm-topbar b { color: #60a5fa; font-size: .9rem; }
+    #cm-count  { color: var(--text-muted); }
+    .cm-btn {
+      display: inline-flex; align-items: center; gap: .3rem; padding: .2rem .55rem;
+      border: 1px solid var(--border); border-radius: 4px; background: var(--surface2);
+      color: var(--text-main); cursor: pointer; font-size: .73rem; text-decoration: none;
+      transition: background .15s;
+    }
+    .cm-btn:hover { background: var(--surface-hover); color: var(--text-main); }
+    .cm-btn i { font-size: .78rem; }
+    #cm-topbar .ml-auto { margin-left: auto; display: flex; gap: .35rem; align-items: center; }
+
+    /* ── Layout ── */
+    #cm-body { flex: 1; display: flex; min-height: 0; }
+    #cm-map  { flex: 1; position: relative; }
+
+    /* ── Sidebar kanan: list + detail ── */
+    #cm-sidebar {
+      width: 310px; flex-shrink: 0; display: flex; flex-direction: column;
+      border-left: 1px solid var(--border); background: var(--bg);
+    }
+
+    /* ── Tabs ── */
+    .cm-tabs { display: flex; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+    .cm-tab {
+      flex: 1; padding: .4rem .5rem; font-size: .72rem; text-align: center;
+      cursor: pointer; color: #64748b; border-bottom: 2px solid transparent;
+      transition: color .15s;
+    }
+    .cm-tab.active { color: #60a5fa; border-bottom-color: #3b82f6; }
+    .cm-tab:hover:not(.active) { color: var(--text-muted); }
+
+    /* ── Event list ── */
+    #cm-list-panel { flex: 1; overflow-y: auto; min-height: 0; display: flex; flex-direction: column; }
+    #cm-list-panel.hidden, #cm-detail-panel.hidden { display: none !important; }
+    .cm-ev-item {
+      display: flex; align-items: center; gap: .45rem; padding: .45rem .6rem;
+      border-bottom: 1px solid var(--border); cursor: pointer; transition: background .1s;
+    }
+    .cm-ev-item:hover, .cm-ev-item.sel { background: var(--surface2); }
+    .cm-ev-dot {
+      width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0;
+      border: 1.5px solid rgba(255,255,255,.3);
+    }
+    .cm-ev-mag  { font-weight: 700; font-size: .8rem; width: 36px; flex-shrink: 0; color: var(--text-main); }
+    .cm-ev-info { flex: 1; min-width: 0; }
+    .cm-ev-time { font-size: .67rem; color: var(--text-muted); }
+    .cm-ev-loc  { font-size: .7rem; color: var(--text-main); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .cm-ev-depth{ font-size: .63rem; color: #64748b; }
+
+    /* ── Detail panel ── */
+    #cm-detail-panel {
+      flex: 1; overflow-y: auto; min-height: 0; padding: .6rem;
+      flex-direction: column; gap: .4rem;
+    }
+    #cm-detail-panel.hidden { display: none; }
+    #cm-detail-panel:not(.hidden) { display: flex; }
+    .cm-back { display: inline-flex; align-items: center; gap: .3rem;
+      font-size: .7rem; color: #60a5fa; cursor: pointer; margin-bottom: .2rem; }
+    .cm-back:hover { color: #93c5fd; }
+    .cm-det-mag { font-size: 1.6rem; font-weight: 700; color: var(--text-main); }
+    .cm-det-grid { display: grid; grid-template-columns: 90px 1fr; gap: .18rem .4rem;
+      font-size: .72rem; margin-top: .3rem; }
+    .cm-det-lbl { color: #64748b; }
+    .cm-det-val { color: var(--text-main); font-weight: 600; }
+    .cm-sta-list { margin-top: .4rem; }
+    .cm-sta-hdr { font-size: .67rem; color: #64748b; margin-bottom: .2rem;
+      text-transform: uppercase; letter-spacing: .04em; }
+    .cm-sta-item { display: flex; align-items: center; gap: .35rem;
+      font-size: .7rem; padding: .18rem 0; border-bottom: 1px solid var(--border); }
+    .cm-sta-badge { font-size: .6rem; padding: .05rem .3rem; border-radius: 3px;
+      background: var(--border); color: #60a5fa; font-family: monospace; }
+    .cm-wv-btn { display: flex; align-items: center; justify-content: center;
+      gap: .35rem; padding: .35rem; border-radius: 5px; background: #1d4ed8;
+      color: #fff; font-size: .72rem; cursor: pointer; border: none; width: 100%; margin-top: .4rem; }
+    .cm-wv-btn:hover { background: #2563eb; }
+
+    /* ── Loading ── */
+    #cm-loading { position: absolute; inset: 0; display: flex; align-items: center;
+      justify-content: center; background: var(--bg); z-index: 999; gap: .5rem; color: #64748b; }
+
+    /* ── Legend ── */
+    #cm-legend {
+      position: absolute; bottom: 32px; right: 10px; z-index: 1000;
+      background: var(--surface2); border: 1px solid var(--border); border-radius: 6px;
+      padding: .45rem .6rem; font-size: .65rem; color: var(--text-muted); min-width: 130px;
+    }
+    #cm-legend b { color: var(--text-main); font-size: .67rem; }
+    .cm-leg-row { display: flex; align-items: center; gap: .35rem; margin-top: .25rem; }
+    .cm-leg-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; border: 1px solid rgba(255,255,255,.2); }
+    .cm-leg-sz  { display: flex; align-items: center; gap: .35rem; }
+    .cm-leg-circle {
+      border-radius: 50%; background: rgba(148,163,184,.35); border: 1.5px solid var(--text-muted);
+      flex-shrink: 0;
+    }
+
+    /* ── Toggle relokasi ── */
+    #cm-reloc-bar {
+      display: none; align-items: center; gap: .5rem; padding: .18rem .7rem;
+      background: var(--surface3); border-bottom: 1px solid var(--border); font-size: .72rem;
+      flex-shrink: 0;
+    }
+    #cm-reloc-bar.visible { display: flex; }
+    .cm-toggle-wrap { display: flex; border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
+    .cm-toggle-btn {
+      padding: .18rem .55rem; cursor: pointer; font-size: .7rem;
+      background: var(--surface2); color: #64748b; border: none; transition: all .15s;
+    }
+    .cm-toggle-btn.active { background: #1d4ed8; color: #fff; }
+    .cm-toggle-btn:hover:not(.active) { background: var(--surface-hover); color: var(--text-main); }
+    .cm-toggle-btn:disabled { cursor: not-allowed; opacity: .45; }
+    .cm-toggle-btn:disabled:hover { background: var(--surface2); color: #64748b; }
+    #cm-reloc-info { color: var(--text-muted); }
+    #cm-reloc-info b { color: #fbbf24; }
+
+    /* ── Event waveform modal (ported from the online monitor's om-evw-modal) ── */
+    #evw-backdrop {
+      position: fixed; inset: 0; z-index: 1590; background: rgba(0,0,0,.45);
+      backdrop-filter: blur(2px); transition: opacity .18s ease;
+    }
+    #evw-backdrop.hidden { opacity: 0; pointer-events: none; display: block !important; }
+    #evw-modal {
+      position: fixed; z-index: 1600; top: 50%; left: 50%; transform: translate(-50%, -50%);
+      width: min(1080px, 96vw); max-height: 92vh;
+      background: var(--surface2); border: 1px solid var(--border); border-radius: 12px;
+      box-shadow: 0 16px 48px rgba(0,0,0,.5); display: flex; flex-direction: column;
+      overflow: hidden;
+    }
+    #evw-modal.hidden { display: none; }
+    .evw-hdr { display: flex; align-items: center; gap: .6rem; padding: .75rem 1rem;
+      border-bottom: 1px solid var(--border); flex-shrink: 0; }
+    .evw-hdr-left { display: flex; align-items: center; gap: .5rem; flex: 1; min-width: 0; }
+    .evw-badge { background: #dc2626; color: #fff; font-size: .65rem; font-weight: 700;
+      padding: .15rem .4rem; border-radius: 4px; letter-spacing: .04em; flex-shrink: 0; }
+    .evw-title { font-size: 1.1rem; font-weight: 700; color: var(--strong); }
+    .evw-sub { font-size: .75rem; color: var(--text-muted); white-space: nowrap;
+      overflow: hidden; text-overflow: ellipsis; }
+    .evw-x { cursor: pointer; color: var(--text-muted); font-size: 1rem; padding: .2rem; flex-shrink: 0; }
+    .evw-x:hover { color: var(--strong); }
+    .evw-tz-btn { font-size: .65rem; padding: 2px 7px; border-radius: 4px; border: 1px solid var(--border);
+      background: var(--bg-card); color: var(--text-muted); cursor: pointer; font-family: monospace; }
+    .evw-body { flex: 1; overflow-y: auto; position: relative; padding: .4rem .5rem; min-height: 200px; }
+    .evw-body canvas { display: block; width: 100%; }
+    .evw-loading { position: absolute; inset: 0; background: var(--surface2); display: flex;
+      align-items: center; justify-content: center; text-align: center; color: var(--text-muted); font-size: .78rem; }
+    .evw-foot { display: flex; align-items: center; padding: .4rem 1rem;
+      border-top: 1px solid var(--border); font-size: .68rem; color: var(--text-muted); flex-shrink: 0; }
+
+    /* ── Leaflet overrides ── */
+    .leaflet-popup-content-wrapper { background: var(--surface2); color: var(--text-main); border: 1px solid var(--border); }
+    .leaflet-popup-tip { background: var(--surface2); }
+    .leaflet-popup-content { font-size: .75rem; line-height: 1.5; }
+    .cm-popup-mag { font-size: 1rem; font-weight: 700; }
+    .cm-popup-sub { color: var(--text-muted); font-size: .68rem; }
+    .leaflet-control-zoom a { background: var(--surface2) !important; color: var(--text-main) !important; border-color: var(--border) !important; }
+    .leaflet-control-zoom a:hover { background: var(--surface-hover) !important; }
+    .leaflet-tooltip { background: var(--surface2); border-color: var(--border); color: var(--text-main); }
+    .leaflet-tooltip::before { border-top-color: var(--border); }
+
+  </style>
+</head>
+<body>
+
+<div id="cm-topbar">
+  <b><i class="bi bi-map-fill" style="color:#ef4444"></i> SeisWork</b>
+  <span>Peta Katalog Gempa Real-Time</span>
+  <span id="cm-count"></span>
+  <div class="ml-auto">
+    <a href="/api/online/realtime/catalog.csv" download class="cm-btn" title="Download CSV">
+      <i class="bi bi-download"></i> CSV
+    </a>
+    <button class="cm-btn" onclick="loadEvents()" title="Refresh katalog">
+      <i class="bi bi-arrow-clockwise"></i> Refresh
+    </button>
+    <button class="cm-btn" onclick="window.close()" title="Tutup">
+      <i class="bi bi-x-lg"></i>
+    </button>
+  </div>
+</div>
+
+<!-- Bar relokasi HypoDD -->
+<div id="cm-reloc-bar">
+  <div class="cm-toggle-wrap">
+    <button class="cm-toggle-btn active" id="cm-btn-orig"  onclick="setRelocMode('orig')">🔵 Asli</button>
+    <button class="cm-toggle-btn"        id="cm-btn-reloc" onclick="setRelocMode('reloc')">📍 Relokasi HypoDD</button>
+  </div>
+  <span id="cm-reloc-info"></span>
+</div>
+
+<div id="cm-body">
+  <div id="cm-map">
+    <div id="cm-loading"><i class="bi bi-hourglass-split"></i>&nbsp;Loading catalog…</div>
+    <!-- Legend (pojok kanan bawah peta) -->
+    <div id="cm-legend">
+      <b>Kedalaman</b>
+      <div class="cm-leg-row"><div class="cm-leg-dot" style="background:#ef4444"></div> 0–30 km</div>
+      <div class="cm-leg-row"><div class="cm-leg-dot" style="background:#f97316"></div> 30–70 km</div>
+      <div class="cm-leg-row"><div class="cm-leg-dot" style="background:#eab308"></div> 70–150 km</div>
+      <div class="cm-leg-row"><div class="cm-leg-dot" style="background:#22c55e"></div> 150–300 km</div>
+      <div class="cm-leg-row"><div class="cm-leg-dot" style="background:#3b82f6"></div> &gt;300 km</div>
+      <div style="margin-top:.4rem"><b>Magnitudo</b></div>
+      <div class="cm-leg-sz" style="margin-top:.3rem;align-items:center">
+        <div class="cm-leg-circle" style="width:8px;height:8px"></div><span>M2</span>
+        <div class="cm-leg-circle" style="width:14px;height:14px"></div><span>M4</span>
+        <div class="cm-leg-circle" style="width:20px;height:20px"></div><span>M6</span>
+      </div>
+    </div>
+  </div>
+
+  <div id="cm-sidebar">
+    <div class="cm-tabs">
+      <div class="cm-tab active" id="cm-tab-list" onclick="showTab('list')">
+        <i class="bi bi-list-task"></i> List Event
+      </div>
+      <div class="cm-tab" id="cm-tab-detail" onclick="showTab('detail')">
+        <i class="bi bi-info-circle"></i> Detail
+      </div>
+    </div>
+    <div id="cm-list-panel">
+      <div id="cm-ev-list" style="flex:1;overflow-y:auto"></div>
+    </div>
+    <div id="cm-detail-panel" class="hidden"></div>
+  </div>
+</div>
+
+<!-- Event waveform modal — station waveforms + pick overlay + spectrogram (same as offline) -->
+<div id="evw-backdrop" class="hidden" onclick="closeEventWaveform()"></div>
+<div id="evw-modal" class="hidden">
+  <div class="evw-hdr">
+    <div class="evw-hdr-left">
+      <span class="evw-badge">EVENT</span>
+      <span class="evw-title" id="evw-title">—</span>
+      <span class="evw-sub" id="evw-sub"></span>
+    </div>
+    <div style="display:flex;align-items:center;gap:.5rem">
+      <button id="evw-tz-btn" class="evw-tz-btn" onclick="toggleEvwTz()"
+        title="Toggle UTC / WIB for the event time">UTC</button>
+      <span class="evw-x" onclick="closeEventWaveform()"><i class="bi bi-x-lg"></i></span>
+    </div>
+  </div>
+  <div class="evw-body" id="evw-body">
+    <canvas id="evw-canvas"></canvas>
+    <div class="evw-loading" id="evw-loading"><i class="bi bi-hourglass-split"></i>&nbsp;Loading event waveform…</div>
+  </div>
+  <div class="evw-foot">
+    <span>
+      <span style="color:#ef4444">━</span> P &nbsp;
+      <span style="color:#3b82f6">━</span> S (SeisComP) &nbsp;·&nbsp;
+      <span style="color:#fb923c;border-bottom:1px dashed #fb923c">╌</span> P &nbsp;
+      <span style="color:#c084fc;border-bottom:1px dashed #c084fc">╌</span> S (AI) &nbsp;·&nbsp;
+      <span style="color:#16a34a">━</span> OT
+    </span>
+  </div>
+</div>
+
+<script src="{{ url_for('static', filename='js/vendor/leaflet-1.9.4.min.js') }}"></script>
+<script>
+// ── Constants (same as seiswork.js) ──────────────────────────────────────────
+const FAULT_STYLE = {
+  'Sesar Geser'        : { color: '#f59e0b', weight: 0.7, opacity: 1 },
+  'Sesar Geser Symbol' : { color: '#f59e0b', weight: 0.5, opacity: .9, dashArray: '6,4' },
+  'Sesar Naik'         : { color: '#ef4444', weight: 0.7, opacity: 1 },
+  'Sesar Turun'        : { color: '#60a5fa', weight: 0.7, opacity: 1 },
+  'Sesar Turun Sysmbol': { color: '#60a5fa', weight: 0.5, opacity: .9, dashArray: '6,4' },
+  'Sesar Naik Sysmbol' : { color: '#ef4444', weight: 0.5, opacity: .9, dashArray: '6,4' },
+};
+const FAULT_DEFAULT = { color: '#a78bfa', weight: 0.7, opacity: 1 };
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function depthColor(d) {
+  if (d == null || isNaN(d)) return 'var(--text-muted)';
+  if (d <  30) return '#ef4444';
+  if (d <  70) return '#f97316';
+  if (d < 150) return '#eab308';
+  if (d < 300) return '#22c55e';
+  return '#3b82f6';
+}
+function magRadius(mag) {
+  if (mag == null || isNaN(mag)) return 5;
+  return Math.max(4, Math.min(26, 3 + mag * 3));
+}
+function fmtTime(dt) {
+  if (!dt) return '—';
+  const d = new Date(String(dt).replace(' ', 'T') + (String(dt).includes('Z') ? '' : 'Z'));
+  return d.toISOString().slice(0, 19).replace('T', ' ') + ' UTC';
+}
+function fmtMag(mag) { return mag != null && !isNaN(mag) ? 'M ' + (+mag).toFixed(2) : 'M —'; }
+function f(v, d, suf) { return (v != null && !isNaN(v)) ? (+v).toFixed(d) + (suf||'') : '—'; }
+
+function compassSVG() {
+  return `<svg viewBox="0 0 44 44" width="100%" height="100%">
+    <circle cx="22" cy="22" r="20.5" fill="rgba(10,15,30,.74)" stroke="#3b5573" stroke-width="1"/>
+    <g>
+      <polygon points="22,5 17.5,23 22,19 26.5,23" fill="#ef4444"/>
+      <polygon points="22,39 17.5,21 22,25 26.5,21" fill="#8aa0b8"/>
+      <circle cx="22" cy="22" r="1.6" fill="#cbd5e1"/>
+      <text x="22" y="11.4" text-anchor="middle" font-size="7.5" font-weight="700"
+            fill="#fecaca" font-family="Segoe UI,Arial">N</text>
+    </g></svg>`;
+}
+
+// ── Map init ──────────────────────────────────────────────────────────────────
+const mapEl = document.getElementById('cm-map');
+
+const map = L.map('cm-map', { zoomControl: false, preferCanvas: false });
+L.control.zoom({ position: 'topright' }).addTo(map);
+map.fitBounds([[-11, 94], [6, 141]]);   // Indonesia default
+
+// Panes — z-index identical to seiswork.js buildOnlineMap
+if (!map.getPane('geojsonPane'))   { const p = map.createPane('geojsonPane');   p.style.zIndex = 450; }
+if (!map.getPane('faultNamePane')) { const p = map.createPane('faultNamePane'); p.style.zIndex = 455; }
+if (!map.getPane('evPane'))        { const p = map.createPane('evPane');        p.style.zIndex = 470; }
+if (!map.getPane('relocPane'))     { const p = map.createPane('relocPane');     p.style.zIndex = 480; }
+
+// Basemap layers
+const baseLayers = {
+  dark : L.tileLayer('/tiles/carto_dark/{z}/{x}/{y}.png',
+           { attribution: '&copy; CartoDB', maxZoom: 19, subdomains: ['a','b','c','d'] }),
+  bathy: L.tileLayer('/tiles/esri_ocean/{z}/{x}/{y}.png',
+           { attribution: '&copy; Esri — GEBCO, NOAA, NGDC', maxZoom: 13, maxNativeZoom: 13 }),
+  topo : L.tileLayer('/tiles/opentopomap/{z}/{x}/{y}.png',
+           { attribution: '&copy; OpenTopoMap (CC-BY-SA)', maxZoom: 17, subdomains: ['a','b','c'] }),
+};
+let _activeBase = 'dark';
+baseLayers.dark.addTo(map);
+
+// Layer control (class names from seiswork.css)
+const ctrlDiv = document.createElement('div');
+ctrlDiv.className = 'layer-control';
+ctrlDiv.innerHTML = `
+  <div class="layer-toggle" id="cm-ltbtn" title="Basemap layers"><i class="bi bi-layers"></i></div>
+  <div class="layer-panel" id="cm-lpanel">
+    <div class="layer-sec-title">Basemap</div>
+    <div class="layer-opt" id="cm-opt-bathy">
+      <span class="radio-dot"></span><i class="bi bi-water" style="font-size:.78rem;width:14px"></i> Topo + Bathy
+    </div>
+    <div class="layer-opt" id="cm-opt-topo">
+      <span class="radio-dot"></span><i class="bi bi-mountain" style="font-size:.78rem;width:14px"></i> OpenTopoMap
+    </div>
+    <div class="layer-opt active" id="cm-opt-dark">
+      <span class="radio-dot"></span><i class="bi bi-moon-stars" style="font-size:.78rem;width:14px"></i> CartoDB Dark
+    </div>
+    <div class="layer-sec-title" style="margin-top:.4rem">Overlay</div>
+    <div class="layer-opt active" id="cm-opt-fault" onclick="toggleOv('fault')">
+      <span class="chk-box">✓</span><i class="bi bi-slash-lg" style="font-size:.78rem;width:14px"></i> Faults
+    </div>
+    <div class="layer-opt active" id="cm-opt-volcano" onclick="toggleOv('volcano')">
+      <span class="chk-box">✓</span><i class="bi bi-fire" style="font-size:.78rem;width:14px"></i> Volcanoes
+    </div>
+    <div class="layer-opt" id="cm-opt-slab" onclick="toggleOv('slab')">
+      <span class="chk-box"></span><i class="bi bi-layers-half" style="font-size:.78rem;width:14px"></i> Slab Contours
+    </div>
+  </div>`;
+mapEl.appendChild(ctrlDiv);
+
+function setBase(name) {
+  if (name === _activeBase) { closeLayerPanel(); return; }
+  map.removeLayer(baseLayers[_activeBase]);
+  baseLayers[name].addTo(map);
+  _activeBase = name;
+  ['bathy','topo','dark'].forEach(n =>
+    document.getElementById(`cm-opt-${n}`)?.classList.toggle('active', n === name));
+  closeLayerPanel();
+}
+function closeLayerPanel() {
+  document.getElementById('cm-lpanel')?.classList.remove('open');
+  document.getElementById('cm-ltbtn')?.classList.remove('open');
+}
+document.getElementById('cm-ltbtn').onclick = () => {
+  document.getElementById('cm-lpanel').classList.toggle('open');
+  document.getElementById('cm-ltbtn').classList.toggle('open');
+};
+document.getElementById('cm-opt-bathy').onclick = () => setBase('bathy');
+document.getElementById('cm-opt-topo').onclick  = () => setBase('topo');
+document.getElementById('cm-opt-dark').onclick  = () => setBase('dark');
+map.on('click', closeLayerPanel);
+
+// Compass kanan-bawah
+const compass = document.createElement('div');
+compass.className = 'map-compass mc-br';
+compass.innerHTML = compassSVG();
+mapEl.appendChild(compass);
+
+// Coord bar on hover (shown in the topbar)
+const cmCount = document.getElementById('cm-count');
+map.on('mousemove', e => {
+  if (cmCount) cmCount.textContent =
+    `— ${_dispEvents.length} event   ${e.latlng.lat.toFixed(4)}° N  ${e.latlng.lng.toFixed(4)}° E`;
+});
+
+// ── Overlay layers (fault, volcano) ──────────────────────────────────────────
+const _ovLayers  = { fault: null, volcano: null, slab: null };
+const _ovVisible = { fault: true, volcano: true, slab: false };
+
+async function loadOverlays() {
+  // Fault lines
+  try {
+    const data = await fetch('/footages/indogigis.geojson').then(r => r.ok ? r.json() : null);
+    if (data) {
+      _ovLayers.fault = L.geoJSON(data, {
+        pane : 'geojsonPane',
+        style: feat => {
+          const s = { ...(FAULT_STYLE[feat.properties?.tipe || ''] || FAULT_DEFAULT) };
+          s.pane = 'geojsonPane';
+          return s;
+        },
+        onEachFeature: (feat, lyr) =>
+          lyr.bindTooltip(feat.properties?.tipe || 'Fault',
+            { className: 'sw-tooltip', sticky: false, direction: 'top' }),
+      });
+      if (_ovVisible.fault) _ovLayers.fault.addTo(map);
+    }
+  } catch(_) {}
+
+  // Volcanoes
+  try {
+    const data = await fetch('/footages/Volcano.geojson').then(r => r.ok ? r.json() : null);
+    if (data) {
+      _ovLayers.volcano = L.geoJSON(data, {
+        pane: 'geojsonPane',
+        pointToLayer: (feat, latlng) => {
+          const name = (feat.properties?.name || '').split('|')[0].trim();
+          const icon = L.divIcon({
+            className: '',
+            html: `<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 64 64">
+                     <circle cx="24" cy="10" r="6"  fill="#ff6600" opacity="0.9"/>
+                     <circle cx="32" cy="6"  r="7"  fill="#ff9900" opacity="0.95"/>
+                     <circle cx="40" cy="10" r="5.5" fill="#ff6600" opacity="0.9"/>
+                     <circle cx="32" cy="13" r="5"  fill="#ffcc00" opacity="0.8"/>
+                     <path d="M22 32 Q14 42 10 56 L20 56 Q22 46 26 36Z" fill="#cc2200" opacity="0.75"/>
+                     <path d="M42 32 Q50 42 54 56 L44 56 Q42 46 38 36Z" fill="#cc2200" opacity="0.75"/>
+                     <polygon points="32,15 4,58 60,58" fill="#8B4513" stroke="#5a2d0c" stroke-width="1.5" stroke-linejoin="round"/>
+                     <polygon points="32,16 26,28 38,28" fill="white" opacity="0.45"/>
+                     <ellipse cx="32" cy="15" rx="7" ry="2.5" fill="#333" opacity="0.6"/>
+                   </svg>`,
+            iconSize: [22, 22], iconAnchor: [11, 20],
+          });
+          return L.marker(latlng, { icon, pane: 'geojsonPane' })
+            .bindTooltip(`<b>${name}</b>`, { className: 'sw-tooltip', direction: 'top' });
+        },
+      });
+      if (_ovVisible.volcano) _ovLayers.volcano.addTo(map);
+    }
+  } catch(_) {}
+
+  // Slab contours
+  try {
+    const data = await fetch('/footages/Contour_slabs.geojson').then(r => r.ok ? r.json() : null);
+    if (data) {
+      _ovLayers.slab = L.geoJSON(data, {
+        pane : 'geojsonPane',
+        style: feat => ({
+          color      : '#22d3ee',
+          weight     : 0.8,
+          opacity    : 0.6,
+          dashArray  : '4,3',
+          fillOpacity: 0,
+          pane       : 'geojsonPane',
+        }),
+        onEachFeature: (feat, lyr) => {
+          const elev = feat.properties?.ELEV;
+          if (elev != null)
+            lyr.bindTooltip(`Slab ${Math.abs(elev)} km`,
+              { className: 'sw-tooltip', sticky: true, direction: 'top' });
+        },
+      });
+      if (_ovVisible.slab) _ovLayers.slab.addTo(map);
+    }
+  } catch(_) {}
+}
+
+function toggleOv(key) {
+  const lyr = _ovLayers[key];
+  if (!lyr) return;
+  _ovVisible[key] = !_ovVisible[key];
+  if (_ovVisible[key]) lyr.addTo(map); else map.removeLayer(lyr);
+  const el = document.getElementById(`cm-opt-${key}`);
+  if (el) {
+    el.classList.toggle('active', _ovVisible[key]);
+    el.querySelector('.chk-box').textContent = _ovVisible[key] ? '✓' : '';
+  }
+}
+
+// ── State ─────────────────────────────────────────────────────────────────────
+let _origEvents = [];
+let _relocByEid = {};
+let _relocMeta  = null;
+let _dispEvents = [];
+let _markers    = [];
+let _selIdx     = -1;
+let _mode       = 'orig';
+let _lineLayer  = L.layerGroup().addTo(map);
+let _fitDone    = false;
+
+// ── Load ──────────────────────────────────────────────────────────────────────
+async function loadEvents() {
+  document.getElementById('cm-loading').style.display = 'flex';
+  try {
+    const r = await fetch('/api/online/realtime/catalog?limit=2000').then(r => r.json());
+    _origEvents = r.events || [];
+  } catch(e) {
+    document.getElementById('cm-loading').innerHTML =
+      '<i class="bi bi-exclamation-triangle"></i>&nbsp;Failed to load the catalog: ' + e.message;
+    return;
+  }
+  await loadReloc();
+  _applyMode();
+  document.getElementById('cm-loading').style.display = 'none';
+}
+
+async function loadReloc() {
+  try {
+    const d = await fetch('/api/online/realtime/reloc').then(r => r.json());
+    const st = d.status || {};
+
+    if (st.state === 'done') {
+      const events = d.result?.events || [];
+      _relocByEid = {};
+      events.forEach(ev => { _relocByEid[ev.event_id] = ev; });
+      _relocMeta = { n_reloc: d.result?.n_reloc ?? events.length,
+                     run_at: d.result?.run_at || '', vel_model: d.result?.vel_model || 'IASP91' };
+      const dt = _relocMeta.run_at ? _relocMeta.run_at.slice(0,16).replace('T',' ') : '';
+
+      document.getElementById('cm-reloc-bar').classList.add('visible');
+      document.getElementById('cm-btn-reloc').disabled = _relocMeta.n_reloc === 0;
+      document.getElementById('cm-reloc-info').innerHTML = _relocMeta.n_reloc > 0
+        ? `<b>${_relocMeta.n_reloc} event</b> direlokasi · ${_relocMeta.vel_model}` +
+          (dt ? ` · run ${dt} UTC` : '')
+        : `<b>Relocation failed</b> · 0 events relocated` + (dt ? ` · run ${dt} UTC` : '');
+    } else if (st.state === 'error') {
+      document.getElementById('cm-reloc-bar').classList.add('visible');
+      document.getElementById('cm-reloc-info').innerHTML =
+        `<b>Relokasi error</b>` + (st.error ? ` · ${st.error}` : '');
+    }
+  } catch(_) {}
+}
+
+// ── Mode toggle ───────────────────────────────────────────────────────────────
+function setRelocMode(mode) {
+  _mode = mode;
+  _fitDone = false;   // re-fit the bounds to the newly displayed event set
+  document.getElementById('cm-btn-orig').classList.toggle('active',  mode === 'orig');
+  document.getElementById('cm-btn-reloc').classList.toggle('active', mode === 'reloc');
+  _applyMode();
+  if (_selIdx >= 0) renderDetail(_dispEvents[_selIdx]);
+}
+
+function _applyMode() {
+  if (_mode === 'reloc' && Object.keys(_relocByEid).length) {
+    // Only show events successfully relocated by HypoDD
+    _dispEvents = _origEvents
+      .filter(ev => _relocByEid[ev.event_id])
+      .map(ev => {
+        const r = _relocByEid[ev.event_id];
+        return Object.assign({}, ev, {
+          lat: r.lat, lon: r.lon, depth_km: r.depth_km,
+          _reloc_method: r.reloc_method,
+          _orig_lat: ev.lat, _orig_lon: ev.lon, _orig_dep: ev.depth_km,
+          _reloc_err_h: r.reloc_err_h, _reloc_err_z: r.reloc_err_z,
+          _is_reloc: true,
+        });
+      });
+  } else {
+    _dispEvents = _origEvents.map(ev => Object.assign({}, ev, { _is_reloc: false }));
+  }
+  _selIdx = -1;
+  renderAll(false);
+}
+
+// ── Render markers + list ─────────────────────────────────────────────────────
+function renderAll(doFit) {
+  _markers.forEach(m => m.remove());
+  _markers = [];
+
+  const n      = _dispEvents.length;
+  const nReloc = _dispEvents.filter(e => e._is_reloc).length;
+  if (cmCount) cmCount.textContent = `— ${n} event` + (nReloc ? ` · 📍 ${nReloc} direlokasi` : '');
+
+  if (!n) {
+    document.getElementById('cm-ev-list').innerHTML =
+      '<div style="padding:1rem;color:#64748b;font-size:.75rem;text-align:center">No events yet.</div>';
+    return;
+  }
+
+  if (doFit !== false && !_fitDone) {
+    const lats = _dispEvents.map(e => e.lat).filter(v => v != null && !isNaN(v));
+    const lons = _dispEvents.map(e => e.lon).filter(v => v != null && !isNaN(v));
+    if (lats.length) {
+      map.fitBounds([
+        [Math.min(...lats) - .5, Math.min(...lons) - .5],
+        [Math.max(...lats) + .5, Math.max(...lons) + .5]
+      ], { padding: [30, 30], maxZoom: 12 });
+      _fitDone = true;
+    }
+  }
+
+  // Render in reverse so newer events get a higher z-index
+  [..._dispEvents].reverse().forEach((ev, ri) => {
+    const idx  = n - 1 - ri;
+    const col  = depthColor(ev.depth_km);
+    const rad  = magRadius(ev.mag);
+    const isR  = !!ev._is_reloc;
+    const m = L.circleMarker([ev.lat, ev.lon], {
+      radius     : rad,
+      pane       : isR ? 'relocPane' : 'evPane',
+      color      : isR ? '#fbbf24' : 'rgba(255,255,255,.45)',
+      weight     : isR ? 2.5 : 1,
+      fillColor  : col,
+      fillOpacity: isR ? 0.92 : 0.78,
+    });
+    const tip = isR
+      ? `<b>${fmtMag(ev.mag)}</b> · ${f(ev.depth_km,0,' km')} · 📍 HypoDD<br>` +
+        `<span style="color:#fcd34d;font-size:.64rem">asli: ${f(ev._orig_lat,3)}°, ${f(ev._orig_lon,3)}° · ${f(ev._orig_dep,0,' km')}</span><br>` +
+        `<span style="color:var(--text-muted);font-size:.64rem">${fmtTime(ev.datetime)}</span>`
+      : `<b>${fmtMag(ev.mag)}</b> · ${f(ev.depth_km,0,' km')} · ${ev.nsta||0} sta<br>` +
+        `<span style="color:var(--text-muted);font-size:.65rem">${fmtTime(ev.datetime)}</span>`;
+    m.bindTooltip(tip, { direction:'top', sticky:true, className:'leaflet-tooltip', opacity:.95 });
+    m.on('click', () => selectEvent(idx));
+    m.addTo(map);
+    _markers[idx] = m;
+  });
+
+  renderList();
+}
+
+// ── Event list ─────────────────────────────────────────────────────────────────
+function renderList() {
+  const listEl = document.getElementById('cm-ev-list');
+  if (!listEl) return;
+  listEl.innerHTML = _dispEvents.map((ev, i) => {
+    const col  = depthColor(ev.depth_km);
+    const nc   = ev.nearest_city;
+    const loc  = (nc && nc.dist_km != null)
+      ? `${Math.round(nc.dist_km)} km ${nc.direction} ${nc.city}`
+      : `${f(ev.lat,3)}°, ${f(ev.lon,3)}°`;
+    const badge = ev._is_reloc
+      ? `<span style="font-size:.57rem;padding:.05rem .25rem;background:#78350f;color:#fcd34d;
+              border-radius:3px;margin-left:.25rem">HypoDD</span>` : '';
+    return `<div class="cm-ev-item${i === _selIdx ? ' sel' : ''}" onclick="selectEvent(${i})">
+      <div class="cm-ev-dot" style="background:${col};${ev._is_reloc?'border:2px solid #fbbf24':''}"></div>
+      <div class="cm-ev-mag">${ev.mag != null ? 'M'+f(ev.mag,1) : '—'}</div>
+      <div class="cm-ev-info">
+        <div class="cm-ev-time">${fmtTime(ev.datetime)}${badge}</div>
+        <div class="cm-ev-loc">${loc}</div>
+        <div class="cm-ev-depth">${f(ev.depth_km,1,' km')} · ${ev.nsta||0} sta</div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// ── Select event ───────────────────────────────────────────────────────────────
+function selectEvent(idx) {
+  _selIdx = idx;
+  const ev = _dispEvents[idx];
+  if (!ev) return;
+  _markers.forEach((m, i) => {
+    if (!m) return;
+    const r  = magRadius(_dispEvents[i]?.mag);
+    const iR = !!_dispEvents[i]?._is_reloc;
+    if (i === idx)
+      m.setStyle({ weight: 3, color: '#ffffff', radius: r + 2 });
+    else
+      m.setStyle({ weight: iR ? 2.5 : 1, color: iR ? '#fbbf24' : 'rgba(255,255,255,.45)', radius: r });
+  });
+  _lineLayer.clearLayers();
+  map.setView([ev.lat, ev.lon], Math.max(map.getZoom(), 8), { animate: true });
+  renderList();
+  renderDetail(ev);
+  showTab('detail');
+}
+
+// ── Detail panel ───────────────────────────────────────────────────────────────
+function renderDetail(ev) {
+  const el = document.getElementById('cm-detail-panel');
+  if (!el) return;
+  const col = depthColor(ev.depth_km);
+  const nc  = ev.nearest_city;
+  const locStr = (nc && nc.dist_km != null)
+    ? `${Math.round(nc.dist_km)} km ${nc.direction} ${nc.city}`
+    : `${f(ev.lat,3)}°, ${f(ev.lon,3)}°`;
+
+  const relocRows = ev._is_reloc ? `
+    <span class="cm-det-lbl" style="color:#fbbf24">Metode Relok</span>
+    <span class="cm-det-val" style="color:#fcd34d">${ev._reloc_method||'HypoDD'} · IASP91</span>
+    <span class="cm-det-lbl" style="color:#fbbf24">Posisi Asli</span>
+    <span class="cm-det-val" style="color:var(--text-muted);font-size:.67rem">
+      ${f(ev._orig_lat,4)}°, ${f(ev._orig_lon,4)}° · ${f(ev._orig_dep,1,' km')}
+    </span>
+    <span class="cm-det-lbl" style="color:#fbbf24">Error H / Z</span>
+    <span class="cm-det-val" style="color:var(--text-muted)">
+      ${ev._reloc_err_h!=null?f(ev._reloc_err_h,2,' km'):'—'} /
+      ${ev._reloc_err_z!=null?f(ev._reloc_err_z,2,' km'):'—'}
+    </span>` : '';
+
+  const stations = ev.stations || [];
+  const staHtml = stations.length
+    ? `<div class="cm-sta-list">
+        <div class="cm-sta-hdr"><i class="bi bi-broadcast"></i> ${stations.length} Recording Stations</div>
+        ${stations.map(s => `<div class="cm-sta-item"><span class="cm-sta-badge">${s}</span></div>`).join('')}
+      </div>`
+    : `<div style="font-size:.68rem;color:#64748b;margin-top:.3rem">Station data unavailable</div>`;
+
+  const relocBadge = ev._is_reloc
+    ? `<span style="font-size:.65rem;padding:.1rem .4rem;background:#78350f;color:#fcd34d;
+               border-radius:4px;margin-left:.4rem;vertical-align:middle">📍 HypoDD</span>` : '';
+
+  el.innerHTML = `
+    <div>
+      <div class="cm-back" onclick="showTab('list')">
+        <i class="bi bi-arrow-left"></i> Kembali ke list
+      </div>
+      <div class="cm-det-mag">${fmtMag(ev.mag)}
+        <span style="width:14px;height:14px;border-radius:50%;display:inline-block;
+          background:${col};border:${ev._is_reloc?'2px solid #fbbf24':'1.5px solid rgba(255,255,255,.4)'};
+          vertical-align:middle;margin-left:.4rem"></span>${relocBadge}
+      </div>
+      <div class="cm-det-grid">
+        <span class="cm-det-lbl">Waktu (UTC)</span>
+        <span class="cm-det-val">${fmtTime(ev.datetime)}</span>
+        <span class="cm-det-lbl">Lokasi</span>
+        <span class="cm-det-val">${locStr}</span>
+        <span class="cm-det-lbl">Lat / Lon</span>
+        <span class="cm-det-val">${f(ev.lat,4)}°, ${f(ev.lon,4)}°</span>
+        <span class="cm-det-lbl">Kedalaman</span>
+        <span class="cm-det-val" style="color:${col}">${f(ev.depth_km,1,' km')}</span>
+        <span class="cm-det-lbl">Magnitudo</span>
+        <span class="cm-det-val">${fmtMag(ev.mag)}</span>
+        <span class="cm-det-lbl">Jumlah Sta</span>
+        <span class="cm-det-val">${ev.nsta || '—'}</span>
+        <span class="cm-det-lbl">RMS</span>
+        <span class="cm-det-val">${f(ev.rms,3,' s')}</span>
+        <span class="cm-det-lbl">Gap</span>
+        <span class="cm-det-val">${f(ev.gap,0,'°')}</span>
+        <span class="cm-det-lbl">Metode Lok</span>
+        <span class="cm-det-val">${ev.loc_method || ev.assoc || '—'}</span>
+        ${relocRows}
+        <span class="cm-det-lbl">ID Event</span>
+        <span class="cm-det-val" style="font-size:.65rem;word-break:break-all">${ev.event_id || '—'}</span>
+      </div>
+      ${staHtml}
+      <button class="cm-wv-btn" onclick="openWaveform('${ev.event_id}')">
+        <i class="bi bi-activity"></i> Lihat Waveform &amp; Picks
+      </button>
+    </div>`;
+}
+
+function openWaveform(eventId) {
+  showEventWaveform(eventId);
+}
+
+// ── Event waveform modal (ported from online-monitor.js's om-evw-modal) ─────
+let _evwData   = null;
+let _evwTzUtc  = true;   // true=UTC, false=WIB — default UTC (not WITA)
+
+async function showEventWaveform(eid) {
+  if (!eid) return;
+  const bd = document.getElementById('evw-backdrop');
+  const md = document.getElementById('evw-modal');
+  const ld = document.getElementById('evw-loading');
+  bd?.classList.remove('hidden'); md?.classList.remove('hidden');
+  if (ld) { ld.style.display = 'flex'; ld.innerHTML = '<i class="bi bi-hourglass-split"></i>&nbsp;Loading event waveform…'; }
+  document.getElementById('evw-title').textContent = 'Event ' + eid;
+  document.getElementById('evw-sub').textContent = '';
+  try {
+    const data = await fetch(`/api/online/realtime/event_waveform?id=${encodeURIComponent(eid)}`).then(r => r.json());
+    if (data.error || !data.streams || !data.streams.length) {
+      const msg = data.error || (data.streams && !data.streams.length
+        ? 'Waveform unavailable — the ring-buffer data has moved past the window. Try the SDS archive.' : 'no data');
+      document.getElementById('evw-sub').textContent = msg;
+      if (ld) {
+        ld.innerHTML = `<span style="color:#f87171;font-size:.78rem;text-align:center;padding:.6rem"><i class="bi bi-exclamation-triangle" style="font-size:1.2rem;display:block;margin-bottom:.3rem"></i>${msg}</span>`;
+        ld.style.display = 'flex';
+      }
+      return;
+    }
+    _evwData = data;
+    _renderEvwTitle(data);
+    const ev = data.event;
+    const nc = ev.nearest_city;
+    const ncTxt = nc && nc.dist_km != null ? `  ·  ${Math.round(nc.dist_km)} km ${nc.direction} of ${nc.city}` : '';
+    document.getElementById('evw-sub').textContent =
+      `${ev.lat.toFixed(3)}, ${ev.lon.toFixed(3)} · ${ev.depth_km.toFixed(1)} km · ${data.streams.length} sta${ncTxt}`;
+    _drawEventWaveform(data);
+    if (ld) ld.style.display = 'none';
+  } catch (e) {
+    document.getElementById('evw-sub').textContent = 'failed to load: ' + e.message;
+    if (ld) ld.style.display = 'none';
+  }
+}
+
+function _renderEvwTitle(data) {
+  if (!data) return;
+  const ev = data.event;
+  const tzBtn = document.getElementById('evw-tz-btn');
+  if (tzBtn) {
+    tzBtn.textContent = _evwTzUtc ? 'UTC' : 'WIB';
+    tzBtn.title = _evwTzUtc ? 'Click to show WIB (UTC+7)' : 'Click to show UTC';
+  }
+  let timeStr;
+  if (_evwTzUtc) {
+    const d = new Date(ev.datetime.replace(' ', 'T') + (ev.datetime.includes('Z') ? '' : 'Z'));
+    timeStr = d.toISOString().slice(0, 19).replace('T', ' ') + ' UTC';
+  } else {
+    const d2 = new Date(ev.datetime.replace(' ', 'T') + (ev.datetime.includes('Z') ? '' : 'Z'));
+    d2.setTime(d2.getTime() + 7 * 3600000);
+    const p = n => String(n).padStart(2, '0');
+    timeStr = `${d2.getUTCFullYear()}-${p(d2.getUTCMonth()+1)}-${p(d2.getUTCDate())} `
+            + `${p(d2.getUTCHours())}:${p(d2.getUTCMinutes())}:${p(d2.getUTCSeconds())} WIB`;
+  }
+  document.getElementById('evw-title').textContent =
+    `${timeStr}  ·  ${ev.mag != null ? 'M ' + ev.mag.toFixed(2) : 'M —'}`;
+}
+
+function toggleEvwTz() {
+  _evwTzUtc = !_evwTzUtc;
+  _renderEvwTitle(_evwData);
+}
+
+function closeEventWaveform() {
+  document.getElementById('evw-backdrop')?.classList.add('hidden');
+  document.getElementById('evw-modal')?.classList.add('hidden');
+}
+
+// Colormap viridis (256 entries, pre-computed RGBA), memoized
+let __evwSpecCM = null;
+function _evwSpecCM() {
+  if (__evwSpecCM) return __evwSpecCM;
+  const lut = new Uint8ClampedArray(256 * 4);
+  const stops = [
+    [0,    68,   1,  84],
+    [0.13, 71,  44, 122],
+    [0.25, 59,  82, 139],
+    [0.38, 44, 113, 142],
+    [0.50, 33, 145, 140],
+    [0.63, 39, 174, 128],
+    [0.75, 94, 201,  98],
+    [0.88,175, 220,  56],
+    [1.0, 253, 231,  37],
+  ];
+  for (let i = 0; i < 256; i++) {
+    const v = i / 255;
+    let si = 0;
+    for (let k = stops.length - 2; k >= 0; k--) { if (v >= stops[k][0]) { si = k; break; } }
+    const lo = stops[si], hi = stops[Math.min(si + 1, stops.length - 1)];
+    const t = lo[0] === hi[0] ? 0 : (v - lo[0]) / (hi[0] - lo[0]);
+    lut[i*4]   = Math.round(lo[1] + t * (hi[1] - lo[1]));
+    lut[i*4+1] = Math.round(lo[2] + t * (hi[2] - lo[2]));
+    lut[i*4+2] = Math.round(lo[3] + t * (hi[3] - lo[3]));
+    lut[i*4+3] = 255;
+  }
+  return (__evwSpecCM = lut);
+}
+
+// Draw the spectrogram panel onto ctx in the (x0,y0,pW,sH) area
+function _drawEvwSpecPanel(ctx, spec, x0, y0, pW, sH, tA, tB) {
+  const { db, t: specT, f, vmin, vmax } = spec;
+  const nF = db.length, nT = db[0]?.length || 0;
+  if (!nF || !nT) return;
+
+  const oc  = document.createElement('canvas');
+  oc.width  = nT; oc.height = nF;
+  const oct = oc.getContext('2d');
+  const img = oct.createImageData(nT, nF);
+  const pix = img.data;
+  const cm  = _evwSpecCM();
+  const dv  = vmax - vmin + 1e-10;
+
+  for (let fi = 0; fi < nF; fi++) {
+    const row = nF - 1 - fi;
+    for (let ti = 0; ti < nT; ti++) {
+      const val = Math.max(0, Math.min(1, (db[fi][ti] - vmin) / dv));
+      const ci  = Math.round(val * 255);
+      const idx = (row * nT + ti) * 4;
+      pix[idx]   = cm[ci * 4];
+      pix[idx+1] = cm[ci * 4 + 1];
+      pix[idx+2] = cm[ci * 4 + 2];
+      pix[idx+3] = 255;
+    }
+  }
+  oct.putImageData(img, 0, 0);
+
+  const tSpan = tB - tA;
+  const t0sp  = specT[0], t1sp = specT[nT - 1];
+  const xS    = x0 + Math.max(0,   (t0sp - tA) / tSpan * pW);
+  const xE    = x0 + Math.min(pW,  (t1sp - tA) / tSpan * pW);
+  const wS    = Math.max(1, xE - xS);
+
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'medium';
+  ctx.drawImage(oc, xS, y0, wS, sH);
+}
+
+// Render the event waveform: each station = a waveform row + spectrogram.
+// UTC time axis on top; picks overlaid as vertical lines.
+function _drawEventWaveform(data) {
+  const canvas = document.getElementById('evw-canvas');
+  const body   = document.getElementById('evw-body');
+  if (!canvas || !body) return;
+  const streams = data.streams || [];
+  if (!streams.length) return;
+
+  const W   = (body.clientWidth || 700) - 16;
+  const LW  = 100;
+  const RW  = 8;
+  const pW  = W - LW - RW;
+  const AH  = 34;
+  const WH  = 54;
+  const SH  = 56;
+  const RH  = WH + SH;
+  const H   = AH + streams.length * RH;
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width  = W * dpr; canvas.height = H * dpr;
+  canvas.style.width = '100%'; canvas.style.height = H + 'px';
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  const t0 = data.t0, tA = t0 - data.pre, tB = t0 + data.post;
+  const span = tB - tA;
+  const toX = t => LW + (t - tA) / span * pW;
+
+  const _toUTC = ep => new Date(ep * 1000).toISOString().slice(11, 16);
+  const _toRel = dt => {
+    if (Math.abs(dt) < 0.5) return 'OT';
+    const sign = dt < 0 ? '−' : '+';
+    const abs  = Math.abs(dt);
+    const m    = Math.floor(abs / 60);
+    const s    = Math.round(abs % 60);
+    return s === 0 ? `${sign}${m}m` : `${sign}${m}:${String(s).padStart(2,'0')}`;
+  };
+
+  ctx.fillStyle = '#f8fafc'; ctx.fillRect(0, 0, W, H);
+
+  ctx.fillStyle = '#1e293b'; ctx.fillRect(0, 0, W, AH);
+
+  const _tickStep = span <= 60 ? 5 : span <= 120 ? 10 : span <= 300 ? 30
+                  : span <= 600 ? 60 : span <= 1200 ? 120 : 300;
+  const _pxPerTick = pW / (span / _tickStep);
+  const _skipAlt   = _pxPerTick < 42;
+  let _tickIdx = 0;
+  const _ft = Math.ceil(tA / _tickStep) * _tickStep;
+
+  for (let _t = _ft; _t <= tB; _t += _tickStep, _tickIdx++) {
+    const x = toX(_t);
+    if (x < LW + 1 || x > W - RW - 1) continue;
+    ctx.strokeStyle = '#334155'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(x, 14); ctx.lineTo(x, AH); ctx.stroke();
+
+    if (!_skipAlt || _tickIdx % 2 === 0) {
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#94a3b8'; ctx.font = '8px monospace';
+      ctx.fillText(_toUTC(_t), x, 11);
+      ctx.fillStyle = '#64748b'; ctx.font = '7.5px monospace';
+      ctx.fillText(_toRel(_t - t0), x, AH - 3);
+    }
+  }
+
+  ctx.textAlign = 'left';
+  ctx.fillStyle = '#475569'; ctx.font = 'bold 7px monospace';
+  ctx.fillText('UTC',    3, 11);
+  ctx.fillStyle = '#334155'; ctx.font = '7px monospace';
+  ctx.fillText('from OT', 1, AH - 3);
+
+  const _preMin  = Math.round(data.pre  / 60);
+  const _postMin = Math.round(data.post / 60);
+  ctx.textAlign = 'left';
+  ctx.fillStyle = '#ef4444'; ctx.font = 'bold 7.5px monospace';
+  ctx.fillText(`−${_preMin}m`, LW + 2, AH - 3);
+  ctx.textAlign = 'right';
+  ctx.fillText(`+${_postMin}m`, W - RW - 2, AH - 3);
+
+  ctx.strokeStyle = '#2d3748'; ctx.lineWidth = 0.5;
+  ctx.beginPath(); ctx.moveTo(LW, 15); ctx.lineTo(W - RW, 15); ctx.stroke();
+
+  const _ox = toX(t0);
+  ctx.strokeStyle = '#16a34a'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(_ox, 1); ctx.lineTo(_ox, AH); ctx.stroke();
+  ctx.fillStyle = '#16a34a'; ctx.font = 'bold 7.5px monospace'; ctx.textAlign = 'center';
+  ctx.fillText('OT', _ox, AH - 3);
+
+  streams.forEach((s, i) => {
+    const yTop  = AH + i * RH;
+    const ySep  = yTop + WH;
+    const yBot  = yTop + RH;
+
+    if (i % 2) { ctx.fillStyle = '#f0f4f8'; ctx.fillRect(0, yTop, W, RH); }
+
+    ctx.fillStyle = '#1e293b'; ctx.font = 'bold 10px monospace'; ctx.textAlign = 'left';
+    ctx.fillText(`${s.net}.${s.sta}`, 3, yTop + 16);
+    ctx.fillStyle = '#6b7280'; ctx.font = '8px monospace';
+    ctx.fillText(`${s.cha}`, 3, yTop + 29);
+    ctx.fillText(`${s.dist_km}km`, 3, yTop + 40);
+
+    const yMid = yTop + WH / 2;
+    const pts = s.points || [];
+    if (pts.length > 1) {
+      let vmax = 1e-12;
+      for (const p of pts) vmax = Math.max(vmax, Math.abs(p.v));
+      const sc = (WH * 0.44) / vmax;
+      ctx.strokeStyle = '#1e3a5f'; ctx.lineWidth = 0.8; ctx.beginPath();
+      let started = false;
+      for (const p of pts) {
+        const x = toX(p.t);
+        if (x < LW || x > W - RW) continue;
+        const y = yMid - p.v * sc;
+        started ? ctx.lineTo(x, y) : (ctx.moveTo(x, y), started = true);
+      }
+      ctx.stroke();
+      ctx.strokeStyle = '#cbd5e1'; ctx.lineWidth = 0.4;
+      ctx.beginPath(); ctx.moveTo(LW, yMid); ctx.lineTo(W - RW, yMid); ctx.stroke();
+    }
+
+    const sp = s.spec;
+    if (sp && sp.db && sp.db.length && sp.t && sp.t.length) {
+      _drawEvwSpecPanel(ctx, sp, LW, ySep, pW, SH, tA, tB);
+    } else {
+      ctx.fillStyle = '#1e293b'; ctx.fillRect(LW, ySep, pW, SH);
+      ctx.fillStyle = '#334155'; ctx.font = '8px sans-serif'; ctx.textAlign = 'center';
+      ctx.fillText('spectrogram unavailable', LW + pW / 2, ySep + SH / 2 + 3);
+    }
+    ctx.fillStyle = '#94a3b8'; ctx.font = '7px monospace'; ctx.textAlign = 'left';
+    if (sp && sp.f && sp.f.length) {
+      const fMax = sp.f[sp.f.length - 1];
+      ctx.fillText(`${Math.round(fMax)}Hz`, 3, ySep + 10);
+      ctx.fillText('0Hz', 3, yBot - 4);
+    }
+
+    const ox = toX(t0);
+    ctx.strokeStyle = '#16a34a'; ctx.lineWidth = 1.4; ctx.setLineDash([5, 3]);
+    ctx.beginPath(); ctx.moveTo(ox, yTop); ctx.lineTo(ox, yBot); ctx.stroke();
+    ctx.setLineDash([]);
+
+    (s.picks || []).forEach(pk => {
+      const isP  = (pk.phase || 'P').toUpperCase().startsWith('P');
+      const isAI = pk.source === 'phasenet' || pk.source === 'stored' || pk.source === 'assoc';
+      const col  = isAI
+        ? (isP ? '#fb923c' : '#c084fc')
+        : (isP ? '#ef4444' : '#3b82f6');
+      const x = toX(pk.t);
+      if (x < LW || x > W - RW) return;
+      ctx.strokeStyle = col; ctx.lineWidth = isAI ? 1.4 : 2;
+      if (isAI) ctx.setLineDash([5, 3]);
+      ctx.beginPath(); ctx.moveTo(x, yTop); ctx.lineTo(x, yBot); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = col; ctx.font = 'bold 9px monospace'; ctx.textAlign = 'left';
+      ctx.fillText(isP ? 'P' : 'S', x + 2, yTop + 12);
+    });
+
+    ctx.strokeStyle = '#334155'; ctx.lineWidth = 0.5;
+    ctx.beginPath(); ctx.moveTo(0, yBot); ctx.lineTo(W, yBot); ctx.stroke();
+    ctx.strokeStyle = '#475569'; ctx.lineWidth = 0.5;
+    ctx.beginPath(); ctx.moveTo(LW, ySep); ctx.lineTo(W - RW, ySep); ctx.stroke();
+  });
+}
+
+// ── Tab switch ─────────────────────────────────────────────────────────────────
+function showTab(tab) {
+  document.getElementById('cm-tab-list').classList.toggle('active',   tab === 'list');
+  document.getElementById('cm-tab-detail').classList.toggle('active', tab === 'detail');
+  document.getElementById('cm-list-panel').classList.toggle('hidden',   tab !== 'list');
+  document.getElementById('cm-detail-panel').classList.toggle('hidden', tab !== 'detail');
+}
+
+// ── Init ───────────────────────────────────────────────────────────────────────
+loadOverlays();
+loadEvents();
+setInterval(async () => {
+  try {
+    const r = await fetch('/api/online/realtime/catalog?limit=2000').then(r => r.json());
+    _origEvents = r.events || [];
+    _applyMode();
+  } catch(_) {}
+}, 30000);
+</script>
+</body>
+</html>

@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="SeisWork">
+  <rect x="3" y="3" width="58" height="58" rx="14" fill="#0d1117"/>
+  <rect x="3" y="3" width="58" height="58" rx="14" fill="none" stroke="#e8531a" stroke-opacity="0.4" stroke-width="2"/>
+  <path d="M6 32 H16 L21 32 L26 14 L32 50 L38 23 L42 40 L47 32 H58"
+        fill="none" stroke="#e8531a" stroke-width="3.6"
+        stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

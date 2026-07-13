@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>SeisWork — Station Map</title>
+  <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='img/seiswork-station.svg') }}"/>
+  <script src="{{ url_for('static', filename='js/native-bridge.js') }}"></script>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/leaflet-1.9.4.min.css') }}"/>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/bootstrap-icons.min.css') }}"/>
+  <style>
+    /* Theme follows the OS (dark default, light via media query). */
+    :root {
+      --bg: #0f1420; --text: #e0e6f0; --muted: #8898aa; --strong: #ffffff;
+      --surface: #1a1e2e; --surface2: rgba(26,30,46,.94); --border: #2d3555;
+      --btn: #232840; --btn-hover: #2d3555; --accent: #3b82f6;
+    }
+    @media (prefers-color-scheme: light) {
+      :root {
+        --bg: #f8fafc; --text: #374151; --muted: #64748b; --strong: #111827;
+        --surface: #ffffff; --surface2: rgba(255,255,255,.94); --border: #cbd5e1;
+        --btn: #ffffff; --btn-hover: #f1f5f9; --accent: #2563eb;
+      }
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; overflow: hidden; }
+    body {
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      background: var(--bg); color: var(--text);
+      display: flex; flex-direction: column;
+    }
+    /* ── Brand header — follows OS theme, matching the main app's navbar ── */
+    #sm-brandbar {
+      height: 50px; flex-shrink: 0; display: flex; align-items: center; padding: 0 1rem; gap: .75rem;
+      background: var(--surface); border-bottom: 1px solid var(--border);
+    }
+    #sm-brand-logo { font-size: 1.2rem; font-weight: 700; letter-spacing: 1px; color: var(--strong); }
+    #sm-brand-logo span { color: #e8531a; }
+    #sm-brand-badge { background: #e8531a; color: #fff; font-size: .62rem; padding: 2px 7px; border-radius: 3px; font-weight: 700; }
+    #sm-brand-tag { font-size: .7rem; color: var(--muted); white-space: nowrap; }
+    #sm-topbar {
+      height: 36px; display: flex; align-items: center; gap: .6rem;
+      padding: 0 .8rem; background: var(--surface); border-bottom: 1px solid var(--border);
+      flex-shrink: 0; font-size: .8rem;
+    }
+    #sm-count  { color: var(--muted); }
+    #sm-status { color: var(--muted); font-size: .74rem; }
+    .sm-btn {
+      display: inline-flex; align-items: center; gap: .3rem; padding: .2rem .55rem;
+      border: 1px solid var(--border); border-radius: 4px; background: var(--btn);
+      color: var(--text); cursor: pointer; font-size: .73rem; text-decoration: none;
+    }
+    .sm-btn:hover { background: var(--btn-hover); color: var(--strong); }
+    .sm-btn i { font-size: .78rem; }
+    #sm-topbar .ml-auto { margin-left: auto; display: flex; gap: .35rem; align-items: center; }
+
+    #sm-map { flex: 1; position: relative; }
+    #sm-loading { position: absolute; inset: 0; display: flex; align-items: center;
+      justify-content: center; background: var(--surface2); z-index: 999; gap: .5rem; color: var(--muted); }
+
+    #sm-legend {
+      position: absolute; bottom: 20px; right: 10px; z-index: 1000;
+      background: var(--surface2); border: 1px solid var(--border); border-radius: 6px;
+      padding: .45rem .6rem; font-size: .65rem; color: var(--muted); min-width: 150px;
+      box-shadow: 0 2px 10px rgba(0,0,0,.08);
+    }
+    #sm-legend b { color: var(--strong); font-size: .67rem; }
+    .sm-leg-row { display: flex; align-items: center; gap: .4rem; margin-top: .25rem; }
+    .sm-leg-tri { width: 0; height: 0; border-left: 6px solid transparent; border-right: 6px solid transparent;
+      border-bottom: 10px solid; flex-shrink: 0; }
+
+    .leaflet-popup-content-wrapper { background: var(--surface); color: var(--text); border: 1px solid var(--border); }
+    .leaflet-popup-tip { background: var(--surface); }
+    .leaflet-popup-content { font-size: .75rem; line-height: 1.5; }
+    .leaflet-control-zoom a { background: var(--surface) !important; color: var(--text) !important; border-color: var(--border) !important; }
+    .leaflet-control-zoom a:hover { background: var(--btn-hover) !important; }
+    .leaflet-tooltip { background: var(--surface); border-color: var(--border); color: var(--text); }
+    .leaflet-tooltip::before { border-top-color: var(--border); }
+    .sw-tooltip { background: var(--surface) !important; border: 1px solid var(--border) !important;
+      color: var(--text) !important; font-size: .72rem; box-shadow: 0 2px 8px rgba(0,0,0,.12); }
+
+    /* Same pick/association blink as the dashboard (see online-monitor.js
+       _blinkStation) — one color for both stages. Bright yellow for contrast
+       against the CartoDB Dark basemap (the map itself stays dark). */
+    @keyframes sm-blink-kf {
+      0%, 100% { opacity: 1;    filter: drop-shadow(0 0 0 rgba(250, 204, 21, 0)); }
+      50%      { opacity: 0.35; filter: drop-shadow(0 0 7px rgba(250, 204, 21, 0.95)); }
+    }
+    .sm-blink { animation: sm-blink-kf 0.55s ease-in-out infinite; }
+
+    /* ── Layer control ── */
+    .layer-control { position: absolute; top: 10px; left: 10px; z-index: 500; pointer-events: auto; }
+    .layer-toggle {
+      width: 32px; height: 32px;
+      background: var(--surface); border: 1px solid var(--border); border-radius: 5px;
+      display: flex; align-items: center; justify-content: center;
+      cursor: pointer; color: var(--muted); font-size: .95rem;
+      transition: color .15s, border-color .15s; user-select: none;
+      box-shadow: 0 2px 10px rgba(0,0,0,.08);
+    }
+    .layer-toggle:hover, .layer-toggle.open { color: var(--accent); border-color: var(--accent); }
+    .layer-panel {
+      position: absolute; top: 0; left: 38px;
+      background: var(--surface); border: 1px solid var(--border); border-radius: 7px;
+      padding: 6px 0; min-width: 190px;
+      box-shadow: 0 4px 20px rgba(0,0,0,.15);
+      display: none; z-index: 2000;
+    }
+    .layer-panel.open { display: block; }
+    .layer-sec-title {
+      font-size: .63rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: .6px; color: var(--muted);
+      padding: .3rem .8rem .15rem;
+    }
+    .layer-opt {
+      display: flex; align-items: center; gap: .5rem;
+      padding: .32rem .8rem; font-size: .77rem;
+      cursor: pointer; color: var(--muted);
+      transition: background .12s, color .12s; user-select: none;
+    }
+    .layer-opt:hover { background: var(--btn-hover); color: var(--strong); }
+    .layer-opt.active { color: var(--strong); }
+    .radio-dot {
+      width: 9px; height: 9px; border-radius: 50%;
+      border: 2px solid var(--border); flex-shrink: 0;
+      transition: border-color .12s, background .12s;
+    }
+    .layer-opt.active .radio-dot { border-color: var(--accent); background: var(--accent); }
+    .chk-box {
+      width: 13px; height: 13px; border-radius: 3px;
+      border: 1.5px solid var(--border); flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center;
+      font-size: .6rem; transition: border-color .12s, background .12s;
+    }
+    .layer-opt.active .chk-box { border-color: var(--accent); background: var(--accent); color: #fff; }
+
+    /* ── Realtime waveform modal (opened on station marker click) ── */
+    #sm-wv-backdrop {
+      position: fixed; inset: 0; background: rgba(15,23,42,.35); z-index: 1500;
+    }
+    #sm-wv-modal {
+      position: fixed; top: 6vh; left: 50%; transform: translateX(-50%);
+      width: min(900px, 94vw); max-height: 88vh; z-index: 1501;
+      background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+      display: flex; flex-direction: column; overflow: hidden;
+      box-shadow: 0 10px 40px rgba(0,0,0,.2);
+    }
+    #sm-wv-backdrop.hidden, #sm-wv-modal.hidden { display: none; }
+    #sm-wv-hdr { display: flex; align-items: center; gap: .5rem; padding: .55rem .8rem;
+      border-bottom: 1px solid var(--border); flex-shrink: 0; }
+    #sm-wv-badge { font-size: .68rem; font-weight: 700; padding: .1rem .4rem; border-radius: 3px;
+      background: #0891b2; color: #fff; }
+    #sm-wv-title { font-weight: 700; font-size: .88rem; color: var(--strong); }
+    #sm-wv-name  { font-size: .72rem; color: var(--muted); }
+    #sm-wv-x { margin-left: auto; cursor: pointer; color: var(--muted); font-size: 1rem; }
+    #sm-wv-x:hover { color: var(--strong); }
+    #sm-wv-meta { display: flex; gap: 1rem; padding: .35rem .8rem; font-size: .7rem;
+      color: var(--muted); border-bottom: 1px solid var(--border); flex-shrink: 0; }
+    #sm-wv-meta i { margin-right: .25rem; }
+    #sm-wv-plot { position: relative; flex: 1; overflow-y: auto; min-height: 200px; background: #f8fafc; }
+    #sm-wv-plot canvas { display: block; width: 100%; }
+    #sm-wv-axis { flex-shrink: 0; height: 26px; display: block; width: 100%; border-top: 1px solid var(--border); }
+    #sm-wv-empty { padding: 2rem; text-align: center; color: var(--muted); font-size: .8rem; }
+    #sm-wv-foot { padding: .3rem .8rem; font-size: .68rem; color: var(--muted); border-top: 1px solid var(--border); flex-shrink: 0; }
+  </style>
+</head>
+<body>
+
+<div id="sm-brandbar">
+  <div id="sm-brand-logo">Seis<span>Work</span></div>
+  <div id="sm-brand-badge" title="Running code version">v{{ version }}</div>
+  <div id="sm-brand-tag">Simple Seismological Data Processing Framework &nbsp;·&nbsp; by HakimBMKG</div>
+</div>
+
+<div id="sm-topbar">
+  <span>Station Map — full page</span>
+  <span id="sm-count"></span>
+  <span id="sm-status"></span>
+  <div class="ml-auto">
+    <button class="sm-btn" onclick="refreshStations()" title="Refresh stations">
+      <i class="bi bi-arrow-clockwise"></i> Refresh
+    </button>
+    <button class="sm-btn" onclick="window.close()" title="Close">
+      <i class="bi bi-x-lg"></i>
+    </button>
+  </div>
+</div>
+
+<div id="sm-map">
+  <div id="sm-loading"><i class="bi bi-hourglass-split"></i>&nbsp;Loading basemap…</div>
+  <div id="sm-legend">
+    <b>Station Status</b>
+    <div class="sm-leg-row"><div class="sm-leg-tri" style="border-bottom-color:#16a34a"></div> Live (receiving data)</div>
+    <div class="sm-leg-row"><div class="sm-leg-tri" style="border-bottom-color:var(--muted)"></div> No data yet</div>
+    <div class="sm-leg-row"><div class="sm-leg-tri" style="border-bottom-color:#facc15"></div> New pick / association</div>
+  </div>
+</div>
+
+<!-- Realtime waveform modal — opened on station marker click -->
+<div id="sm-wv-backdrop" class="hidden" onclick="closeStationModal()"></div>
+<div id="sm-wv-modal" class="hidden">
+  <div id="sm-wv-hdr">
+    <span id="sm-wv-badge">NET</span>
+    <span id="sm-wv-title">—</span>
+    <span id="sm-wv-name"></span>
+    <span id="sm-wv-x" onclick="closeStationModal()" title="Close (Esc)"><i class="bi bi-x-lg"></i></span>
+  </div>
+  <div id="sm-wv-meta">
+    <span><i class="bi bi-geo-alt"></i><span id="sm-wv-loc">—</span></span>
+    <span><i class="bi bi-layers"></i><span id="sm-wv-elev">— m</span></span>
+    <span><i class="bi bi-clock"></i><span id="sm-wv-time">—</span></span>
+  </div>
+  <div id="sm-wv-plot">
+    <canvas id="sm-wv-canvas"></canvas>
+    <div id="sm-wv-empty" style="display:none">No live data for this station yet</div>
+  </div>
+  <canvas id="sm-wv-axis"></canvas>
+  <div id="sm-wv-foot"><span id="sm-wv-picks"></span></div>
+</div>
+
+<script src="{{ url_for('static', filename='js/vendor/leaflet-1.9.4.min.js') }}"></script>
+<script src="{{ url_for('static', filename='js/modules/waveform-canvas-render.js') }}"></script>
+<script src="{{ url_for('static', filename='js/modules/station-map-fullpage.js') }}?v={{ asset_version }}"></script>
+</body>
+</html>

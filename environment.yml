@@ -1,0 +1,47 @@
+name: seiswork
+# All C-dependent packages via conda-forge (handles system libs automatically).
+# PyTorch + seisbench + GaMMA + SKHASH installed via pip in install.sh Step 5
+# (CUDA version must be detected at runtime). SKHASH (focal mechanism / HASH,
+# https://code.usgs.gov/esc/SKHASH) is installed with --no-deps: its own
+# pyproject.toml pins numpy<2.0, but it runs fine on numpy>=2 (verified) and
+# a real pip-resolved install would downgrade numpy and break xarray/simulflow
+# (used by the Imaging step) elsewhere in this same env.
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  # ── Core scientific ────────────────────────────────────────────
+  - numpy
+  - pandas
+  - scipy
+  - matplotlib
+  - tqdm
+  - pyyaml
+  # ── Seismology (C extensions → conda-forge) ───────────────────
+  - obspy          # MiniSEED, waveform processing, SCML I/O
+  - pyproj         # coordinate transforms (C lib)
+  - cartopy        # map plotting (needs proj + geos C libs)
+  - shapely        # geometry (C lib, required by cartopy)
+  - geopandas      # geo dataframes
+  # ── Slab2 auto-contour (Result Viewer 2D/3D) ──────────────────
+  - xarray         # read Slab2.0 .grd grids
+  - netcdf4        # NetCDF backend for xarray (GMT .grd files)
+  - beautifulsoup4 # scrape ScienceBase Slab2.0 download links
+  # ── Phase association deps ─────────────────────────────────────
+  - scikit-learn   # GaMMA clustering backend
+  - numba          # GaMMA seismic_ops acceleration (conda brings LLVM)
+  - llvmlite       # numba dependency — conda-forge version avoids conflicts
+  # ── System monitoring (web GUI sys monitor tab) ───────────────
+  - psutil
+  # ── Build/utility ──────────────────────────────────────────────
+  - pip
+  - pip:
+    # PyTorch and seisbench installed here as fallback (see download_tools.py)
+    # Correct CUDA-specific URL is set by download_tools.py at runtime.
+    - seisbench
+    - flask
+    - requests
+    # Native desktop window for `seiswork gui --native` (OS WebView; the GUI
+    # falls back to the browser if absent). Linux needs WebKitGTK system libs.
+    - pywebview>=5.0

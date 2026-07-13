@@ -1,0 +1,296 @@
+# ============================================================
+#  SeisWork Configuration
+#  Author : HakimBMKG
+#  Edit all sections below before running the pipeline.
+# ============================================================
+
+# ── Region & Time ────────────────────────────────────────────
+region:
+  name      : "Indonesia"
+  lat       : -2.50         # center latitude  (°N)
+  lon       : 118.00        # center longitude (°E)
+  lat_min   : -11.50
+  lat_max   : 6.50
+  lon_min   : 94.50
+  lon_max   : 141.50
+  depth_max : 60.0          # km
+  starttime : "2016-08-01T00:00:00"
+  endtime   : "2018-12-31T23:59:59"
+
+# ── Data Paths ───────────────────────────────────────────────
+data:
+  waveform_dir : "work/waveforms"        # MiniSEED or SDS archive
+  sds_format   : true                    # true = SDS structure (NET/STA/YEAR/...)
+  station_file : "config/stations.txt"   # network|station|lat|lon|elev|...
+  inventory    : "config/inventory.xml"  # StationXML (response/PAZ)
+
+# ── FDSN Download (optional) ─────────────────────────────────
+fdsn:
+  client   : "LOCAL"         # IRIS | BMKG | LOCAL | ...
+  user     : ""
+  password : ""
+  networks : ["7G", "IA"]
+  channels : "HH?,BH?,EH?"
+
+# ── Phase Picking ─────────────────────────────────────────────
+pick:
+  # PhaseNet — via seisbench (PyTorch, no TensorFlow)
+  # model weights are auto-downloaded on first run (~50 MB)
+  phasenet:
+    model      : "PhaseNet"   # seisbench model class: PhaseNet | EQTransformer | GPD
+    pretrained : "stead"      # pretrained weights key (stead | instance | geofon | ...)
+    batch_size : 64           # seisbench annotation batch size
+    highpass_hz: 1.0          # pre-filter highpass (Hz), 0 = skip
+    p_threshold: 0.5          # P-pick probability threshold
+    s_threshold: 0.5         # S-pick: 0.40 untuk local seismicity (S/P ~1.4); 0.3 terlalu rendah → banyak S-coda false picks
+    workers    : 8            # parallel threads for I/O and peak extraction
+
+    # gpu_workers — N proses penuh paralel di GPU yang sama (adaptasi
+    # PhaseNet_GPU.sh). Satu model PhaseNet tak memenuhi H100; >1 men-split
+    # daftar task (station-day / file mseed) ke N worker (tiap punya model
+    # sendiri, PyTorch berbagi GPU) lalu menggabung picks-nya. 1 = nonaktif.
+    # Pakai 4–10 untuk run besar (setahun) agar GPU terpakai maksimal.
+    gpu_workers: 1
+    io_processes: 0           # alternatif lama (reader MP feed 1 GPU); rapuh di run besar
+
+    # ── Data source ───────────────────────────────────────────
+    # "file"     — scan waveform_dir for .mseed/.seed files (default)
+    # "sds"      — read directly from SDS archive (no temp-copy)
+    # "sds_lite" — read SDS lightly: scan record headers (mseedlite, no
+    #              libmseed/no decode), decode only the byte-range that
+    #              overlaps the requested window (by HakimBMKG)
+    # "fdsn"     — download from FDSN server (needs station_file or sds_path)
+    # "sds+fdsn" — SDS first, FDSN fallback for missing station-days
+    data_source: "file"
+
+    # SDS (used by data_source: sds, sds+fdsn)
+    sds_path      : ""        # SDS archive root; empty = use data.waveform_dir
+    sds_chunk_days      : 1   # days per read chunk
+    annotate_chunk_hours: 1   # slice stream into N-hour chunks before GPU annotation
+                              # prevents huge tensor allocation (1 day = 8.6M samples)
+
+    # FDSN (used by data_source: fdsn, sds+fdsn)
+    fdsn_client    : ""       # override fdsn.client; empty = use fdsn.client above
+    fdsn_chunk_days: 1        # days per download chunk
+    fdsn_save_sds  : true     # save FDSN downloads to SDS archive (avoids re-download)
+
+  # STA/LTA (ObsPy)
+  stalta:
+    sta_sec      : 0.5
+    lta_sec      : 10.0
+    thresh_on    : 3.0
+    thresh_off   : 1.0
+    min_duration : 0.5        # seconds after trigger
+    freqmin      : 1.0
+    freqmax      : 20.0
+
+# ── Phase Association ─────────────────────────────────────────
+associate:
+  # GaMMA
+  gamma:
+    use_amplitude     : true
+    method            : "BGMM"     # BGMM | GMM
+    oversample_factor : 5
+    min_picks_per_event: 4         # jaringan jarang (~20-34 stasiun); 8 terlalu ketat -> 0 event
+    max_sigma         : 3.0
+    # DBSCAN pre-clustering — WAJIB true untuk data multi-hari/ribuan picks:
+    # tanpa ini, BGMM tunggal dgn oversample_factor=5 menghasilkan
+    # max_num_event ~ ribuan komponen (mustahil konvergen dlm waktu wajar).
+    # eps = jangkauan jaringan (km) / vp; default otomatis dihitung dari region,
+    # override di sini bila perlu (misal eps lebih besar -> lebih permisif).
+    use_dbscan        : true
+    dbscan_min_samples: 4
+
+  # REAL
+  real:
+    exec              : "REAL"     # path to REAL binary, or just "REAL" if in PATH
+    tt_db             : "config/ttdb.txt"   # travel-time table (REAL format)
+    lat_center        : 0.951      # -D latref (pusat region, runREAL.pl Jailolo)
+    # NB: key di bawah HARUS cocok dengan yang dibaca real.py (search/threshold
+    # /tt_grid/velocity). Versi lama memakai grid_search{dlat..}/threshold{min_p}
+    # yang TIDAK dibaca real.py → REAL jatuh ke default & -G tak dikirim (ttdb
+    # tak terpakai) → hasil asosiasi beda dari referensi runREAL.pl. Nilai di
+    # bawah mereproduksi referensi: -R0.1/20/0.02/2/5 -S3/2/8/2/0.5/0.1/1.2/0.0
+    # -G1.4/20/0.01/1 -V6.2/3.4.
+    search:                        # -R rx/rh/tdx/tdh/tint
+      rx              : 0.1        # search radius lat/lon (deg)
+      rh              : 20.0       # search radius depth (km)
+      tdx             : 0.02       # grid lat/lon (deg)
+      tdh             : 2.0        # grid depth (km)
+      tint            : 5.0        # event interval (s)
+    tt_grid:                       # -G trx/trh/tdx/tdh (HARUS sama dgn ttdb.txt)
+      trx             : 1.4        # max horizontal range (deg)
+      trh             : 20.0       # max depth (km)
+      tdx             : 0.01       # horizontal grid (deg)
+      tdh             : 1.0        # depth grid (km)
+    velocity:                      # -V vp0/vs0
+      vp0             : 6.2
+      vs0             : 3.4
+    threshold:                     # -S np0/ns0/nps0/npsboth0/std0/dtps/nrt/drt
+      np0             : 3
+      ns0             : 2
+      nps0            : 8
+      npsboth0        : 2
+      std0            : 0.5
+      dtps            : 0.1
+      nrt             : 1.2
+      drt             : 0.0
+
+# ── Velocity Model (VELEST) ───────────────────────────────────
+velocity:
+  velest:
+    exec        : "velest"           # binary path or "velest" if in PATH
+    lat_ref     : 0.951              # pusat region (sama dgn REAL/runREAL.pl)
+    lon_ref     : 127.60
+    dist_max_km : 200.0
+    distmax     : 100.0              # velest.cmn dmax (km); ref pakai 100 (1000 → RMS naik)
+    # damping velocity (vthet) & station (stathet) di velest.cmn baris 6.
+    # NB: nilai LAMA 0.01/0.01 SALAH (overfit) → RMS tinggi. Referensi 7G_Jailolo
+    # & default kode = vthet 10, stathet 1.
+    damping_vel : 10                 # vthet (damping model kecepatan)
+    damping_sta : 1                  # stathet (damping koreksi stasiun)
+    mode        : 1                  # 0=full inversion, 1=locations only
+    initial_model : "config/velocity.mod"   # starting 1D model
+
+# ── Location ──────────────────────────────────────────────────
+locate:
+  # Hypoinverse
+  hypoinverse:
+    exec        : "hypoinverse"
+    model_file  : "config/hypoinverse.crh"   # crustal model
+    station_file: "config/station.dat"
+
+  # LocSAT (via SeisComP scautoloc / scolv)
+  locsat:
+    seiscomp_bin: ""               # kosong = auto-detect (PATH / SEISCOMP_ROOT / ~/seiscomp / /opt/seiscomp)
+    database    : "mysql://sysop:sysop@localhost/newseiscomp"
+    table       : "iasp91"         # locsat travel-time table
+
+  # NonLinLoc
+  nlloc:
+    exec        : "NLLoc"
+    grid_dir    : "config/nlloc_grids"
+    model_prefix: "model/layer"
+    grid_search : "MISFIT"           # MISFIT | PROB_DENSITY
+    save_scatter: false
+
+# ── Magnitude ────────────────────────────────────────────────
+magnitude:
+  inventory    : "config/inventory.xml"   # StationXML with PAZ
+  dist_max_km  : 300.0
+  wood_anderson:
+    sensitivity : 2800.0
+    gain        : 1.0
+    zeros       : [[0.0, 0.0], [0.0, 0.0]]
+    poles       : [[-6.283, 7.354], [-6.283, -7.354]]
+  a_coefficient : -1.0           # regional attenuation a
+  b_coefficient :  1.0           # regional attenuation b
+
+# ── Relocation (HypoDD) ───────────────────────────────────────
+relocation:
+  hypodd:
+    exec_ph2dt  : "ph2dt"
+    exec_hypodd : "hypoDD"
+
+    # ph2dt parameters
+    ph2dt:
+      min_links   : 8
+      min_obs     : 8
+      max_sep_km  : 10.0
+      max_dist_km : 100.0
+
+    # hypoDD parameters
+    # Blok iterasi hypoDD.inp di-generate dari `nset` (jumlah set bobot): NSET
+    # baris, masing-masing `niter_per_set` iterasi, WRCT diinterpolasi dari
+    # wrct_start (longgar) → wrct_end (ketat).
+    hypodd:
+      nset          : 4      # jumlah set bobot → jumlah baris blok iterasi
+      niter_per_set : 4      # iterasi per set
+      wrct_start    : 8.0    # WRCT set pertama (longgar)
+      wrct_end      : 3.0    # WRCT set terakhir (ketat)
+      convergence   : 0.01
+      damping       : 1.0
+      min_weight    : 0.01
+      amax_res      : 0.1
+      rmscut        : 0.1
+
+    # cross-correlation (waveform similarity) parameters.
+    # dt.cc dihitung dari FDTCC (waveform CC nyata, alur LOC-FLOW); waveform
+    # di-prefilter di ObsPy (bandpass [pre_filt[1], pre_filt[-2]], corners=4,
+    # zerophase) lalu FDTCC dijalankan -B-1/-1 (verified bit-exact vs Demo).
+    crosscorr:
+      exec_fdtcc  : "FDTCC"
+      pre_filt    : [2.0, 2.0, 8.0, 8.0]   # bandpass band (low=idx1, high=idx-2)
+      cc_threshold: 0.7
+      snr_threshold: 1.0
+      dt_max_sec  : 2.0          # max |t1-t2| of a pick pair (s)
+      fdtcc_window: "0.2/1.0/0.3/0.5/1.5/0.5"  # wb/wa/wf (P), wbs/was/wfs (S)
+      fdtcc_grid  : "3/20/0.02/2"             # trx/trh/tdx/tdh (tt table)
+      window_p    : [-0.2, 0.8]   # relative to P pick (catalog-dt fallback)
+      window_s    : [-0.2, 0.8]   # relative to S pick (catalog-dt fallback)
+
+  # GrowClust relative relocation (LOC-FLOW final refinement stage).
+  # Reuses the hypoDD event/station/dt.ct inputs (dt.ct → GrowClust dt.cc).
+  growclust:
+    exec        : "growclust"
+    rmin        : 0.6     # min correlation coef to use a pair
+    delmax      : 120     # max station distance (km)
+    rmsmax      : 0.2     # max rms residual (s) to relocate a cluster
+    rmincut     : 0.0     # cluster-merge correlation threshold
+    ngoodmin    : 8       # min # good differential times per pair
+    iponly      : 0       # 0 = use P & S, 1 = P only
+    nboot       : 0       # bootstrap resamples (0 = none)
+    nbranch_min : 1       # min cluster size to output
+    tt_dep1     : 40.0    # max depth (km) for travel-time table
+    tt_del1     : 200.0   # max distance (km) for travel-time table
+    vpvs        : 1.69    # Vp/Vs for S travel-time table
+    use_fdtcc   : true    # true = real FDTCC waveform-CC dt.cc; false = catalog dt.ct→dt.cc
+
+# ── Detection (template matching) ─────────────────────────────
+# Match&Locate (Zhang & Wen 2015) — LOC-FLOW final stage. Catalog events become
+# templates that scan continuous data to detect + locate additional small events.
+# Templates are cut from the same ObsPy-prefiltered continuous SAC that is
+# scanned (bandpass corners=4 zerophase), and MatchLocate2 runs -B-1/-1.
+detection:
+  matchlocate:
+    exec_ml         : "MatchLocate2"
+    exec_select     : "SelectFinal"
+    template_min_mag: 0.5      # only events >= this mag are used as templates
+    max_templates   : 10       # cap on number of templates (strongest first)
+    comp            : "HHZ"    # vertical channel used for templates + scan
+    dist_max_deg    : 0.2      # max station-event distance for template traces
+    tleng_sec       : 40.0     # template length (≈ 100 km / 2.5 km/s)
+    both_ps         : 0        # 0 = S-only template, 1 = mark both P and S
+    phase0          : "S"      # single-phase mode reference phase
+    multiphase      : 0        # 0 = single phase ($phase0), 1 = use all phases
+    bp_low          : 2.0      # bandpass low  (default = crosscorr.pre_filt[1])
+    bp_high         : 8.0      # bandpass high (default = crosscorr.pre_filt[-2])
+    search_R        : "0.0/0.0/0"     # search area maxlat/maxlon/maxh (0/0/0 = matched filter)
+    search_I        : "0.01/0.01/0.5" # search interval dlat/dlon/ddep
+    T_window        : "2.0/0.5/1.5"   # CC window length/before/after the marked phase
+    H_thresh        : "0.0/7.0"       # detection thresholds CC / N(*MAD)
+    D_intd          : 3.0      # keep one event within this many seconds
+    min_stations    : 3        # warn if fewer stations (location poorly constrained)
+    scan_start      : null     # YYYY-MM-DD; null = scan the templates' own days
+    scan_end        : null     # YYYY-MM-DD; null = scan the templates' own days
+    growclust_refine: false    # true = relocate detections with GrowClust afterwards
+
+# ── Plot / Output ─────────────────────────────────────────────
+plot:
+  dpi       : 150
+  figsize   : [12, 10]
+  depth_colormap : "viridis_r"
+  mag_scale      : 3.0           # point size = mag * mag_scale
+  map_extent: null               # null = auto from region bounds
+
+# ── Federation (server ⇄ client) ──────────────────────────────
+# SeisWork jalan standalone secara default. Untuk mode server/client:
+#  - SERVER: set `token` (atau env SEISWORK_TOKEN) supaya client harus auth;
+#    kosong = tanpa auth (LAN tepercaya). server_id otomatis di ~/.seiswork.
+#  - CLIENT: `seiswork remote --server URL --token T ...`  atau isi default di
+#    sini. Hasil job auto-sync ke `sync_dir` (mirror per job_id).
+federation:
+  token      : ""                         # server bearer token (kosong = no auth)
+  server_url : ""                         # client: default server (mis. http://host:5000)
+  sync_dir   : "work/remote"              # client: mirror hasil job dari server
+  auto_sync  : true                       # client: unduh otomatis saat job selesai

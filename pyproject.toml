@@ -1,0 +1,73 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "seiswork"
+version = "0.0.1b0"   # PEP 440; the display version lives in seiswork/__init__.py — managed via ./update.sh
+description = "Simple Seismological Data Processing Framework"
+authors = [
+    {name = "HakimBMKG", email = "arif.hakim@bmkg.go.id"},
+]
+license = {text = "MIT"}
+requires-python = ">=3.10"
+keywords = ["seismology", "earthquake", "phase-picking", "relocation", "BMKG"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Physics",
+    "Programming Language :: Python :: 3.10",
+]
+
+# Core runtime deps (CPU-only baseline; GPU extras declared below)
+dependencies = [
+    "pyyaml>=6.0",
+    "numpy>=1.24",
+    "pandas>=2.0",
+    "scipy>=1.10",
+    "obspy>=1.4",
+    "matplotlib>=3.7",
+    "pyproj>=3.5",
+    "tqdm>=4.65",
+    "shapely>=2.0",
+    "flask>=3.0",
+    "requests>=2.28",
+    "pywebview>=5.0",   # native desktop window (`seiswork gui --native`); browser fallback if absent
+]
+
+[project.optional-dependencies]
+# GPU phase picking + association
+gpu = [
+    "seisbench",
+    "torch",
+]
+# Full install (GPU + GaMMA; install GaMMA from GitHub not PyPI)
+full = [
+    "seiswork[gpu]",
+]
+# Plotting extras
+plot = [
+    "cartopy>=0.21",
+    "geopandas",
+]
+# Test runner
+dev = [
+    "pytest",
+    "pytest-timeout",
+]
+
+[project.scripts]
+seiswork = "seiswork.cli:main"
+
+[project.urls]
+Repository = "https://github.com/HakimBMKG/seiswork"
+
+[tool.setuptools.packages.find]
+# discover packages under the project root (flat layout: seiswork/)
+where = ["."]
+include = ["seiswork*"]
+
+[tool.setuptools.package-data]
+# Include config template and web GUI templates
+"seiswork"     = ["../config/*.yaml"]
+"seiswork.web" = ["templates/*.html"]
