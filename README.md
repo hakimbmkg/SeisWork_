@@ -142,6 +142,44 @@ seiswork stop                # stop ALL components (GUI, mirror, agent, pipeline
 > would serve old code) with a native popup. Use `--force` to take over, or
 > `seiswork restart` to start clean.
 
+### Production deployment: dev server vs. gunicorn + nginx
+
+By default — `seiswork gui` and the systemd service the installer creates —
+SeisWork runs on Flask's built-in **Werkzeug** dev server. It's simple and
+fine for LAN / single-operator use, but not hardened for the open internet
+(no TLS, and it prints its own "WARNING: this is a development server").
+
+For an internet-facing install, `tools/setup_gunicorn_nginx.sh` swaps that
+for **gunicorn** (a production WSGI server) behind **nginx** (TLS + an IP
+allowlist). This is a deliberate, manual step — `install.sh` never runs it
+automatically, so you choose which one to use:
+
+```bash
+# 1. Edit the CONFIG block at the top of the script first:
+#      ALLOW_CIDRS — CIDR ranges allowed to reach the GUI (the main access
+#                    control, enforced by nginx before a request even reaches SeisWork)
+#      DOMAIN      — leave empty for a self-signed cert, or set it to use certbot
+#      APP_PORT    — internal port gunicorn binds to (127.0.0.1 only)
+#      ENV_BIN     — path to the conda/venv env with `seiswork` (+ gunicorn) installed
+
+# 2. Run it on the target machine (needs sudo, for nginx + the systemd unit):
+bash tools/setup_gunicorn_nginx.sh
+```
+
+This installs nginx + gunicorn, writes a `seiswork-gunicorn.service` (user
+systemd unit) that **replaces** the default `seiswork.service`, and sets
+`SEISWORK_TRUST_PROXY=1` so SeisWork sees the real client IP through the
+proxy instead of nginx's own loopback hop.
+
+> Gunicorn always runs as a **single worker process** (`--workers 1`, more
+> `--threads` for concurrency instead) — SeisWork keeps job/session state in
+> plain in-process memory, not a shared store like Redis, so multiple worker
+> *processes* would each lose track of jobs started on another.
+
+Either way, the GUI itself is identical — same Flask app, same routes, same
+features. The choice only changes how robust/secure the serving process is,
+not what SeisWork does.
+
 ---
 
 ## Update

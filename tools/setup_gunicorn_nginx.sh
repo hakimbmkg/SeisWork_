@@ -19,15 +19,15 @@
 set -e
 
 # ══════════════════════════════ CONFIG — EDIT ME ═════════════════════════════
-# Comma-separated CIDR ranges allowed to reach the GUI (BMKG office / VPN
+# Comma-separated CIDR ranges allowed to reach the GUI (your office / VPN
 # ranges). Everything else is denied at the nginx layer, before auth even
 # matters. THIS IS THE MAIN ACCESS CONTROL — get it right.
-ALLOW_CIDRS="203.0.113.0/24,198.51.100.0/24"   # TODO: ganti ke rentang BMKG asli
+ALLOW_CIDRS="203.0.113.0/24,198.51.100.0/24"   # TODO: replace with your actual allowed ranges
 
 # Domain name for the TLS certificate (leave empty to skip certbot and use a
 # self-signed cert instead — fine for an IP-only/internal deployment, but
 # browsers will warn; get a real cert once DNS is set up).
-DOMAIN=""                                       # TODO: isi kalau ada domain, mis. seiswork.bmkg.go.id
+DOMAIN=""                                       # TODO: fill in if you have a domain, e.g. seiswork.example.org
 
 # Port the SeisWork GUI should listen on internally (gunicorn binds only to
 # 127.0.0.1 here — nginx is the only thing exposed externally).
