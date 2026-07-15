@@ -42,7 +42,6 @@ docker/*
 # referenced by update.sh itself, not a one-off dissertation-data script.
 tools/*
 !tools/web_service.sh
-!tools/sync_public.sh
 
 # Web GUI session data (picking jobs, pipeline jobs, saved configs, tmp files)
 seiswork/web/tmp/
