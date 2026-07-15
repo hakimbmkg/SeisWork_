@@ -11400,7 +11400,11 @@ def _spawn_online_viewer(main_port: int):
     atexit.register(_kill_viewer)
 
 
-def run(host: str = "0.0.0.0", port: int = 5000, debug: bool = False):
+def _bootstrap(port: int = 5000):
+    """One-time process setup shared by the dev server (run(), below) and any
+    external WSGI server (gunicorn, via wsgi.py): working dirs, the Online
+    Viewer mirror, and a background import warm-up. Does NOT start the
+    live-reload watcher — that's dev-only (see run())."""
     CONFIGS_DIR.mkdir(parents=True, exist_ok=True)
     PICK_DIR.mkdir(parents=True, exist_ok=True)
     PIPE_DIR.mkdir(parents=True, exist_ok=True)
@@ -11408,12 +11412,6 @@ def run(host: str = "0.0.0.0", port: int = 5000, debug: bool = False):
     # (skipped when we ARE the viewer, to avoid spawning a viewer-of-a-viewer).
     if not VIEWER_MODE:
         _spawn_online_viewer(port)
-    # Watch .py sources and hot-restart the server when idle (frontend assets
-    # hot-reload in the browser via /api/livereload without any restart).
-    if AUTO_RESTART:
-        threading.Thread(target=_watch_py_and_restart, daemon=True).start()
-        print("[live-reload] active — GUI assets stream live; "
-              "Python edits restart the server when idle.", flush=True)
     # Pre-warm pandas/numpy in background so the first heavy endpoint
     # (e.g. View Result) is not slowed by cold-import (~1 second).
     def _warm_heavy_imports():
@@ -11423,6 +11421,16 @@ def run(host: str = "0.0.0.0", port: int = 5000, debug: bool = False):
         except Exception:
             pass
     threading.Thread(target=_warm_heavy_imports, daemon=True).start()
+
+
+def run(host: str = "0.0.0.0", port: int = 5000, debug: bool = False):
+    _bootstrap(port)
+    # Watch .py sources and hot-restart the server when idle (frontend assets
+    # hot-reload in the browser via /api/livereload without any restart).
+    if AUTO_RESTART:
+        threading.Thread(target=_watch_py_and_restart, daemon=True).start()
+        print("[live-reload] active — GUI assets stream live; "
+              "Python edits restart the server when idle.", flush=True)
     app.run(host=host, port=port, debug=debug, use_reloader=False, threaded=True)
 
 
