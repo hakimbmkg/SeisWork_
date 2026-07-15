@@ -64,6 +64,18 @@ app = Flask(__name__, template_folder="templates")
 app.config["MAX_CONTENT_LENGTH"] = 256 * 1024 * 1024  # 256 MB (full StationXML w/ response can be tens of MB)
 app.config["JSON_SORT_KEYS"] = False
 
+# Trust X-Forwarded-* only when we're actually behind a reverse proxy (nginx
+# etc.) — opt-in via SEISWORK_TRUST_PROXY, never on by default. Several
+# endpoints (server-info, server-info/token, server/restart) gate on
+# `request.remote_addr == 127.0.0.1` to detect "operator on this machine";
+# without ProxyFix, a naive reverse proxy makes THAT check true for every
+# remote client (the proxy's own loopback hop), leaking the bearer token /
+# allowing a remote restart to anyone. Set this env var only once the proxy
+# is confirmed to forward X-Forwarded-For/Proto/Host correctly.
+if os.environ.get("SEISWORK_TRUST_PROXY", "").strip().lower() in ("1", "true", "yes"):
+    from werkzeug.middleware.proxy_fix import ProxyFix
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
+
 
 # Ensure uploads exceeding the limit return JSON (not HTML 413),
 # so the frontend can show a clear message instead of "Invalid response".
@@ -148,6 +160,12 @@ if not AUTH_TOKEN:
 _PUBLIC_API = {"/api/health", "/api/livereload", "/api/server-info",
                "/api/server-info/token", "/api/remote/connect",
                "/api/remote/disconnect", "/api/remote/status"}
+
+# Cross-origin browser access is opt-in only (comma-separated origins, e.g.
+# "https://gui.example.org"). Empty by default — see _cors_headers().
+_CORS_ALLOWED_ORIGINS = {o.strip() for o in
+                         os.environ.get("SEISWORK_CORS_ORIGINS", "").split(",")
+                         if o.strip()}
 
 
 # ── Online Viewer (read-only mirror) ───────────────────────────────────────────
@@ -316,10 +334,30 @@ def _check_sync_token(cfg_id: str) -> bool:
 
 @app.after_request
 def _cors_headers(resp):
-    resp.headers["Access-Control-Allow-Origin"]  = "*"
+    # No page in this app's own frontend needs cross-origin access — every
+    # fetch() in static/js/** targets location.origin, and non-browser
+    # clients (curl, the federation Python client) are never subject to CORS
+    # in the first place. So instead of a blanket "*" (which lets ANY web
+    # page's script read this server's public/no-token endpoints, e.g.
+    # /api/server-info), only echo back an Origin that's been explicitly
+    # allowlisted via SEISWORK_CORS_ORIGINS (comma-separated). Unset = no
+    # cross-origin browser access, which matches what's actually used today.
+    origin = request.headers.get("Origin", "")
+    if origin and origin in _CORS_ALLOWED_ORIGINS:
+        resp.headers["Access-Control-Allow-Origin"] = origin
+        resp.headers["Vary"] = "Origin"
     resp.headers["Access-Control-Allow-Headers"] = (
         "Authorization, Content-Type, X-Seiswork-Token")
     resp.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+    # Baseline security headers — additive, don't change any existing
+    # behavior. SAMEORIGIN (not DENY) because tomography.js embeds a
+    # same-origin Plotly HTML file in an <iframe>.
+    resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+    resp.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
+    resp.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    if request.is_secure:
+        resp.headers.setdefault(
+            "Strict-Transport-Security", "max-age=31536000; includeSubDomains")
     # The HTML shell must stay fresh (carries ?v= cache-bust tokens), but assets
     # are cacheable: app files bump their ?v= token when edited, and vendor files
     # are immutable, so caching them keeps normal reloads fast (esp. Plotly).
