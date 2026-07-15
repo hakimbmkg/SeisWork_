@@ -1199,6 +1199,7 @@ class RealtimeAssociator:
         self.n_events_total = 0
         self.last_cycle_time = None
         self.error = None
+        self._cfg_id: str | None = None   # which config's catalog this instance owns
         self.events: list[dict] = []   # newest at index 0
         # Per-cycle association log (Task 3) — whether events were detected or not.
         self.assoc_log: deque = deque(maxlen=120)
@@ -1238,11 +1239,18 @@ class RealtimeAssociator:
     def start(self, base_dir: str, station_rows: list[dict],
               inventory_path: str | list[str],
               sds_path: str = "", gamma_cfg: dict | None = None,
-              assoc_backend: str | None = None) -> bool:
+              assoc_backend: str | None = None,
+              cfg_id: str | None = None) -> bool:
         with self._lock:
             if self._running:
                 return False
             self._base_dir = base_dir
+            # Bind this run to a specific config's catalog file up front, instead of
+            # resolving it later through the shared, mutable _ACTIVE_CFG_ID global —
+            # that global can drift (another tab/process connecting, a server
+            # restart racing this call) between start() and the reload below,
+            # silently pointing this session at an empty or wrong events.jsonl.
+            self._cfg_id = cfg_id
             self._station_rows = station_rows
             # Accept one inventory XML or several (multi-seedlink sessions).
             if isinstance(inventory_path, (list, tuple)):
@@ -1269,11 +1277,11 @@ class RealtimeAssociator:
             # Load the persistent catalog from disk — the event list is NOT lost when
             # detection restarts / the server restarts (only the in-memory list resets).
             # Dedup first (drop duplicates from rolling-window overlap).
-            n_removed = dedup_catalog(base_dir)
+            n_removed = dedup_catalog(base_dir, cfg_id=self._cfg_id)
             if n_removed:
                 engine_log("gamma", "info",
                            f"startup dedup: {n_removed} duplicate events removed from the catalog")
-            self.events = load_catalog(base_dir, MAX_EVENTS_KEPT)
+            self.events = load_catalog(base_dir, MAX_EVENTS_KEPT, cfg_id=self._cfg_id)
             self.assoc_log.clear()
         self._write_station_file()
         _be_label = self._backend_label()
@@ -1913,7 +1921,7 @@ class RealtimeAssociator:
             with self._lock:
                 self.events.insert(0, event)
                 self.events = self.events[:MAX_EVENTS_KEPT]
-            append_catalog(self._base_dir, event)   # persist to the disk catalog
+            append_catalog(self._base_dir, event, cfg_id=self._cfg_id)   # persist to the disk catalog
             magstr = f"M{event['mag']:.1f}" if event["mag"] is not None else "M—"
             self._log("event", npk,
                       f"EVENT {magstr} @ {event['lat']:.3f},{event['lon']:.3f} "

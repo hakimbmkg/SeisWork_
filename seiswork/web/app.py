@@ -1117,7 +1117,8 @@ def api_realtime_start():
                                   denoise=denoise, denoise_pretrained=denoise_pretrained)
     started_assoc  = assoc.start(str(BASE_DIR), station_rows, inv_paths,
                                  sds_path=sds_path, gamma_cfg=gamma_cfg or None,
-                                 assoc_backend=assoc_backend)
+                                 assoc_backend=assoc_backend,
+                                 cfg_id=_LIVE_SESSION.cfg_id)
 
     # Start slarchive, only when the SeisComP SDS is not fresh (avoids redundancy)
     from seiswork.web._realtime_pipeline import (
