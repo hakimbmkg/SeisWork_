@@ -134,6 +134,8 @@ class AssociationModule {
     document.getElementById('cfm-msg').textContent = '';
     const defaults = AssociationModule.CFM_DEFAULTS;
     AssociationModule.CFM_FIELDS.forEach(f => { const el = document.getElementById('cfm-' + f); if (el) el.value = defaults[f] != null ? defaults[f] : ''; });
+    const yearEl = document.getElementById('cfm-year');
+    if (yearEl) yearEl.value = '';
     // Min CC starts disabled (opt-in — it's the one criterion that reads waveforms)
     const ccToggle = document.getElementById('cfm-min_cc-toggle');
     if (ccToggle) ccToggle.checked = false;
@@ -172,6 +174,18 @@ class AssociationModule {
     if (m) m.style.display = 'none';
   }
 
+  // Year shortcut: fills Start/End (UTC) with Jan 1 – Dec 31 of the typed year.
+  // Not itself a CFM_FIELDS criterion — it just pre-fills start_time/end_time,
+  // which are already sent to the backend and can still be hand-edited after.
+  applyYearFilter(year) {
+    const y = parseInt(year, 10);
+    if (!year || isNaN(y)) return;
+    const startEl = document.getElementById('cfm-start_time');
+    const endEl   = document.getElementById('cfm-end_time');
+    if (startEl) startEl.value = `${y}-01-01T00:00`;
+    if (endEl)   endEl.value   = `${y}-12-31T23:59`;
+  }
+
   async runCatFilter() {
     const jobId = (document.getElementById('cfm-job') || {}).value || '';
     const msg = document.getElementById('cfm-msg');
@@ -195,6 +209,9 @@ class AssociationModule {
       if (this.cfmMethod) await this.refreshSessions(this.cfmMethod);
       // refresh downstream catalog dropdowns so the _filter catalog is immediately available
       this.refreshAllCatalogDropdowns();
+      // Result Viewer's own job selector isn't in that list — refresh it too
+      // so the new _filter session shows up there without a full reopen.
+      if (typeof _rmRefreshJobList === 'function') await _rmRefreshJobList();
       setTimeout(() => { btn.disabled = false; this.closeCatFilter(); }, 1100);
     } catch (e) {
       msg.style.color = '#f87171'; msg.textContent = 'Error: ' + e.message; btn.disabled = false;

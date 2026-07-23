@@ -157,6 +157,10 @@ class PhaseNetPicker:
 
         self.model_name = self.pcfg.get("model",       "PhaseNet")
         self.pretrained  = self.pcfg.get("pretrained",  "stead")
+        # custom_weights: path opsional ke checkpoint state_dict lokal (mis.
+        # hasil fine-tuning regional) -- kalau diisi, dimuat SETELAH
+        # from_pretrained(self.pretrained) sbg base architecture/weights.
+        self.custom_weights = self.pcfg.get("custom_weights")
         self.batch_size  = int(self.pcfg.get("batch_size",  64))
         self.highpass    = float(self.pcfg.get("highpass_hz", 1.0))
         self.p_thresh    = float(self.pcfg.get("p_threshold", 0.3))
@@ -239,6 +243,16 @@ class PhaseNetPicker:
             print("[ERROR] Ensure the server has internet access to download the model on first run,")
             print("[ERROR] or copy the seisbench cache from another machine to ~/.seisbench/")
             sys.exit(1)
+
+        if self.custom_weights:
+            print(f"[PhaseNet] Memuat bobot custom (fine-tuned): {self.custom_weights}")
+            try:
+                state_dict = torch.load(self.custom_weights, map_location="cpu", weights_only=True)
+                model.load_state_dict(state_dict)
+            except Exception as e:
+                print(f"[ERROR] Gagal memuat custom_weights '{self.custom_weights}': {e}")
+                sys.exit(1)
+
         self._on_gpu = torch.cuda.is_available()
         if self._on_gpu:
             model = model.cuda()

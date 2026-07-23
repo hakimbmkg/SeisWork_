@@ -4688,9 +4688,26 @@ def _xml_to_pha(xml_file: Path) -> Path:
       STA        TT   WEIGHT  PHASE
     """
     from obspy import read_events as _re
+    import subprocess as _sp
 
     pha_file = xml_file.with_suffix(".pha")
-    catalog  = _re(str(xml_file))
+
+    # BMKG's FDSNWS occasionally serializes a degenerate magnitude as the
+    # literal text "nan"/"inf" (e.g. an event with 0 amplitude picks).
+    # ObsPy's QuakeML reader rejects any non-finite RealQuantity value
+    # outright and aborts parsing the *entire* catalog over one bad event,
+    # so sanitize those to 0 first (streamed via sed — files here run into
+    # the GB range, too big to load into Python just to patch a few values).
+    clean_file = xml_file.with_name(xml_file.stem + "_clean.xml")
+    with open(clean_file, "wb") as _cf:
+        _sp.run(
+            ["sed", "-E", r"s/<value>-?(nan|inf)<\/value>/<value>0<\/value>/gI"],
+            stdin=open(xml_file, "rb"), stdout=_cf, check=True,
+        )
+    try:
+        catalog = _re(str(clean_file))
+    finally:
+        clean_file.unlink(missing_ok=True)
 
     with open(pha_file, "w") as f:
         ev_id = 1
@@ -4737,6 +4754,7 @@ def _xml_to_pha(xml_file: Path) -> Path:
 def _ql_download_worker(job_id: str, params: dict) -> None:
     """Background thread: download catalog XML from QuakeLink / FDSN event."""
     import requests as _req
+    import time as _time
     from datetime import datetime as _dt
 
     job_dir = TMP_DIR / "ql_jobs" / job_id
@@ -4767,8 +4785,16 @@ def _ql_download_worker(job_id: str, params: dict) -> None:
         base_url = (params.get("base_url") or "").rstrip("/")
         if not base_url:
             raise ValueError("base_url is required")
+        if not re.match(r"^https?://", base_url):
+            base_url = "http://" + base_url
 
-        event_url = base_url + "/fdsnws/event/1/query"
+        # Accept either a bare host ("http://host:port") or the full FDSNWS
+        # event endpoint already typed in (the field placeholder advertises
+        # both) — don't double-append the path in the latter case.
+        if re.search(r"/fdsnws/event/\d+/query$", base_url):
+            event_url = base_url
+        else:
+            event_url = base_url + "/fdsnws/event/1/query"
 
         def _iso(t: str) -> str:
             return t.strip().replace(" ", "T") if t else ""
@@ -4801,10 +4827,35 @@ def _ql_download_worker(job_id: str, params: dict) -> None:
         # strip empty values
         query = {k: v for k, v in query.items() if v != ""}
 
-        r = _req.get(event_url, params=query, stream=True, timeout=180)
+        # FDSNWS event servers occasionally answer a transient 404/connection
+        # error under load even though matching events do exist — retry a
+        # few times with backoff before giving up as genuine "no data".
+        max_attempts = 4
+        r = None
+        for attempt in range(1, max_attempts + 1):
+            try:
+                r = _req.get(event_url, params=query, stream=True, timeout=180)
+                if r.status_code == 200:
+                    break
+                if attempt < max_attempts and r.status_code in (404, 429, 502, 503, 504):
+                    status["state"] = f"retrying ({attempt}/{max_attempts - 1})"
+                    _write(status)
+                    _time.sleep(3.0 * attempt)
+                    continue
+                break
+            except _req.exceptions.RequestException:
+                if attempt < max_attempts:
+                    status["state"] = f"retrying ({attempt}/{max_attempts - 1})"
+                    _write(status)
+                    _time.sleep(3.0 * attempt)
+                    continue
+                raise
+
+        status["state"] = "running"
+        _write(status)
 
         if r.status_code == 404:
-            raise RuntimeError("No data (HTTP 404) — no events match criteria")
+            raise RuntimeError(f"No data (HTTP 404) — no events match criteria (after {max_attempts} attempts)")
         if r.status_code != 200:
             raise RuntimeError(f"HTTP {r.status_code}: {r.text[:200]}")
 
@@ -5784,6 +5835,13 @@ def _build_pick_cfg(meta: dict, method: str, params: dict, job_id: str = "") -> 
             "denoise"            : bool(params.get("denoise", False)),
             "denoise_pretrained" : str(params.get("denoise_pretrained", "original")),
         }
+        # custom_weights: path checkpoint state_dict lokal (mis. hasil
+        # fine-tuning regional) -- opsional, dimuat SETELAH pretrained di
+        # atas sbg base architecture. Belum ada kontrol GUI utk ini,
+        # cuma bisa diisi lewat API/config langsung.
+        custom_weights = params.get("custom_weights")
+        if custom_weights:
+            cfg["pick"]["phasenet"]["custom_weights"] = str(custom_weights)
 
     elif method == "phasenet_native":
         # Native AI4EPS PhaseNet (TensorFlow predict.py), Docker only (TF-GPU

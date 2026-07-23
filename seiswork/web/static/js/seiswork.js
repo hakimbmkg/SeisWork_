@@ -2420,6 +2420,9 @@ async function openQlCatalogInResultModal(jobId) {
   _RM.data   = null;
   _RM.activeJob = null;
   _RM.mgMin = -9; _RM.mgMax = 9; _RM.depMax = 700; _RM.xsHalf = 50; _RM.az = 0;
+  _RM.yearMin = null; _RM.yearMax = null;
+  { const ye1 = document.getElementById('rm-year-min'), ye2 = document.getElementById('rm-year-max');
+    if (ye1) ye1.value = ''; if (ye2) ye2.value = ''; }
   _RM.showFault = true; _RM.showFaultSym = true; _RM.showVolcano = true; _RM.showStation = false;
   _RM.showXS = true; _RM.showSlab = true; _RM.showTopo = true; _RM.showSlab3d = false;
   _RM.showVol3d = false; _RM.showCoast3d = false; _RM.showSlab2d = false; _RM.showTopo3d = false;
@@ -5197,8 +5200,8 @@ function _getPipeParams(step, method) {
     gc_iponly: gi('gc-iponly', 0),
     gc_maxdep: gf('gc-maxdep', 40.0),
     // .inp text from user edits (editor preview). Empty = auto-generate.
-    ph2dt_inp_text:  (_hdInpOverride && _hdInpOverride.ph2dt)  || '',
-    hypodd_inp_text: (_hdInpOverride && _hdInpOverride.hypodd) || '',
+    ph2dt_inp_text:  (HD.inpOverride && HD.inpOverride.ph2dt)  || '',
+    hypodd_inp_text: (HD.inpOverride && HD.inpOverride.hypodd) || '',
   };
   if (step === 'detect' && method === 'matchlocate') return {
     // default = LOC-FLOW PROC_MatchLocate / marktaup
@@ -5778,7 +5781,9 @@ async function openResultModal() {
   document.getElementById('rm-az-v').textContent = '0°';
   document.getElementById('rm-az').value = '0';
   document.getElementById('rm-rx-title').textContent = 'XS N–S';
-  _RM.mgMin = -9; _RM.mgMax = 9; _RM.depMax = 200; _RM.xsHalf = 15; _RM.az = 0;
+  { const ye1 = document.getElementById('rm-year-min'), ye2 = document.getElementById('rm-year-max');
+    if (ye1) ye1.value = ''; if (ye2) ye2.value = ''; }
+  _RM.mgMin = -9; _RM.mgMax = 9; _RM.depMax = 200; _RM.yearMin = null; _RM.yearMax = null; _RM.xsHalf = 15; _RM.az = 0;
   _RM.showFault = true; _RM.showFaultSym = true; _RM.showVolcano = true; _RM.showStation = true;
   _RM.showXS = true; _RM.showSlab = true; _RM.showTopo = true; _RM.showSlab3d = true; _RM.showVol3d = true;
   _RM.showCoast3d = true; _RM.showSlab2d = true; _RM.showTopo3d = true; _RM.showFault3d = true;
@@ -5992,6 +5997,32 @@ function _rmPopulateJobSel() {
   _RM.activeJob = null;
 }
 
+// Re-fetch just the job list (e.g. after Filter & Save creates a new _filter
+// session) so it shows up in rm-job-sel without closing/reopening the viewer.
+async function _rmRefreshJobList() {
+  if (!SW.wpCfgId || _RM.cfgId === '__ql__') return;
+  try {
+    _RM.data = await SW.fetchJSON(`/api/result/${SW.wpCfgId}/catalog`);
+    _rmPopulateJobSel();
+  } catch (_) { }
+}
+
+// Opens the shared Filter Catalog modal (AL.openCatFilter) pre-scoped to
+// whatever pipeline session is currently shown in the Result Viewer.
+function rmOpenCatFilter() {
+  const job = _RM.activeJob;
+  if (!job) {
+    alert('Filter is only available for a pipeline result session, not a QuakeLink download.');
+    return;
+  }
+  const method = job.method || job.mode;
+  if (!method) { alert('Cannot determine the catalog method for this session.'); return; }
+  AL.openCatFilter(method).then(() => {
+    const sel = document.getElementById('cfm-job');
+    if (sel && job.job_id) sel.value = job.job_id;
+  });
+}
+
 function rmOnJobChange() {
   const val = document.getElementById('rm-job-sel').value;
   if (!val) return;
@@ -6099,6 +6130,12 @@ function _rmActiveEvents() {
       if (isNaN(ev.lat) || isNaN(ev.lon)) return false;
       if (ev.mag != null && (ev.mag < _RM.mgMin || ev.mag > _RM.mgMax)) return false;
       if (ev.dep > _RM.depMax) return false;
+      if (_RM.yearMin != null || _RM.yearMax != null) {
+        const yr = ev.datetime ? parseInt(String(ev.datetime).slice(0, 4), 10) : NaN;
+        if (isNaN(yr)) return false;
+        if (_RM.yearMin != null && yr < _RM.yearMin) return false;
+        if (_RM.yearMax != null && yr > _RM.yearMax) return false;
+      }
       return true;
     });
 }
@@ -6601,6 +6638,15 @@ function rmMgMax(el) {
 function rmDepMax(el) {
   _RM.depMax = +el.value;
   document.getElementById('rm-dep-max-v').textContent = _RM.depMax + ' km';
+  _rmUpdate();
+}
+function rmYearFilter() {
+  const minEl = document.getElementById('rm-year-min');
+  const maxEl = document.getElementById('rm-year-max');
+  const yMin = minEl && minEl.value !== '' ? parseInt(minEl.value, 10) : null;
+  const yMax = maxEl && maxEl.value !== '' ? parseInt(maxEl.value, 10) : null;
+  _RM.yearMin = (yMin != null && !isNaN(yMin)) ? yMin : null;
+  _RM.yearMax = (yMax != null && !isNaN(yMax)) ? yMax : null;
   _rmUpdate();
 }
 function rmXsw(el) {
@@ -7882,6 +7928,14 @@ function rmTopoPanel() {
     p.style.display = 'none';
   }
 }
+document.addEventListener('click', (e) => {
+  const p = document.getElementById('rm-topo-dl');
+  if (p && p.style.display !== 'none'
+      && !e.target.closest('#rm-topo-dl')
+      && !e.target.closest('[onclick*="rmTopoPanel"]')) {
+    p.style.display = 'none';
+  }
+});
 
 function rmTopoPreset(name) {
   const p = _RM_TOPO_PRESETS[name]?.();

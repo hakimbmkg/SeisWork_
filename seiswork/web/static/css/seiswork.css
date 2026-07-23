@@ -19,6 +19,7 @@
   --rm-amber  : #f59e0b;
   --rm-blue   : #60a5fa;
   --rm-purple : #a78bfa;
+  --rm-teal   : #5eead4;
 }
 
 @media (prefers-color-scheme: light) {
@@ -34,6 +35,7 @@
     --rm-amber  : #b45309;
     --rm-blue   : #2563eb;
     --rm-purple : #7c3aed;
+    --rm-teal   : #0d9488;
   }
 }
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -273,6 +275,19 @@ body {
 .sw-input:focus { border-color: var(--accent2); }
 .sw-input::placeholder { color: var(--text-muted); }
 .sw-input.flash { border-color: var(--accent); transition: border-color 0s; }
+.sw-input[type="datetime-local"],
+.sw-input[type="date"],
+.sw-input[type="time"] { color-scheme: dark; }
+.sw-input[type="datetime-local"]::-webkit-calendar-picker-indicator,
+.sw-input[type="date"]::-webkit-calendar-picker-indicator,
+.sw-input[type="time"]::-webkit-calendar-picker-indicator {
+  padding: 0; margin: 0 0 0 .3rem; cursor: pointer;
+}
+@media (prefers-color-scheme: light) {
+  .sw-input[type="datetime-local"],
+  .sw-input[type="date"],
+  .sw-input[type="time"] { color-scheme: light; }
+}
 
 /* ── Buttons ── */
 .btn-sw {
@@ -597,10 +612,10 @@ body {
 }
 .pr-topbar {
   display: flex; align-items: center; gap: .4rem; flex-wrap: wrap;
-  padding: .35rem .5rem; background: #0d1626;
-  border-bottom: 1px solid #1e3a5f;
+  padding: .35rem .5rem; background: var(--bg-card);
+  border-bottom: 1px solid var(--border);
 }
-.pr-title { font-weight: 700; font-size: .73rem; color: #60a5fa; white-space: nowrap; }
+.pr-title { font-weight: 700; font-size: .73rem; color: var(--rm-blue); white-space: nowrap; }
 #pr-meta  { display: flex; align-items: center; gap: .3rem; flex-wrap: wrap; flex: 1; min-width: 0; }
 
 /* ── log viewer inside result panel ── */
@@ -622,6 +637,7 @@ body {
 /* ── CSV table container ── */
 .pr-csv-wrap {
   overflow: auto; max-height: 320px;
+  background: #0b0e1a;
 }
 .pr-csv-wrap::-webkit-scrollbar { width: 5px; height: 5px; }
 .pr-csv-wrap::-webkit-scrollbar-thumb { background: #2d3555; border-radius: 3px; }
@@ -1224,34 +1240,35 @@ body {
 /* ── Assoc & Location session results — by HakimBMKG ─────────────────── */
 .al-sessions-wrap {
   margin-top: .6rem;
-  background: #0a0f1e;
-  border: 1px solid #1e3a5f;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
   border-radius: 6px;
   overflow: hidden;
 }
 .al-sess-hdr {
   display: flex; align-items: center; gap: .35rem;
   padding: .3rem .6rem;
-  font-size: .67rem; font-weight: 700; color: #60a5fa;
-  background: #0d1626; border-bottom: 1px solid #1e3a5f;
+  font-size: .67rem; font-weight: 700; color: var(--rm-blue);
+  background: var(--bg-card); border-bottom: 1px solid var(--border);
 }
-.al-sess-hint { font-weight: 400; color: #475569; font-size: .6rem; margin-left: auto; }
+.al-sess-hint { font-weight: 400; color: var(--text-muted); font-size: .6rem; margin-left: auto; }
 .al-sess-empty {
   padding: .5rem .7rem;
-  font-size: .65rem; color: #334155;
+  font-size: .65rem; color: var(--text-muted);
   font-style: italic; text-align: center;
 }
 .al-sess-row {
   display: flex; align-items: center; gap: .4rem;
   padding: .22rem .5rem; font-size: .67rem;
-  border-bottom: 1px solid #0f172a;
+  border-bottom: 1px solid var(--border);
   cursor: default; transition: background .1s;
+  color: var(--text-main);
 }
 .al-sess-row:hover { background: rgba(59,130,246,.08); }
-.al-sess-id { font-family: monospace; color: #f59e0b; font-size: .65rem; min-width: 80px; }
-.al-sess-meth { color: #a78bfa; min-width: 55px; font-size: .63rem; }
+.al-sess-id { font-family: monospace; color: var(--rm-amber); font-size: .65rem; min-width: 80px; }
+.al-sess-meth { color: var(--rm-purple); min-width: 55px; font-size: .63rem; }
 .cat-filter-tag { margin-left: 4px; padding: 0 4px; border-radius: 3px; font-size: .55rem;
-  background: rgba(96,165,250,.18); color: #60a5fa; border: 1px solid rgba(96,165,250,.4);
+  background: rgba(96,165,250,.18); color: var(--rm-blue); border: 1px solid rgba(96,165,250,.4);
   vertical-align: middle; }
 
 /* Kompas peta (statis utk 2D, rose berputar utk 3D) */
@@ -1262,7 +1279,7 @@ body {
 .map-compass.mc-bl { bottom: 18px; left: 10px; }
 .map-compass .mc-rose { transform-box: fill-box; transform-origin: center;
   transition: transform .06s linear; }
-.al-sess-ts { color: #64748b; font-size: .6rem; min-width: 110px; }
+.al-sess-ts { color: var(--text-muted); font-size: .6rem; min-width: 110px; }
 .al-sess-ev { color: #22c55e; min-width: 45px; }
 .al-sess-ev b { font-size: .7rem; }
 
@@ -1295,6 +1312,10 @@ body {
   font-size: .72rem; color: #e2e8f0;
   transition: transform .18s ease;
 }
+/* Panel is permanently dark (terminal-style) regardless of OS theme, so
+   buttons here must not use the theme-following --text-main — it turns
+   dark-on-dark in light mode. */
+.al-phase-modal .btn-ghost-sw { color: #e2e8f0; }
 .al-pm-hdr {
   display: flex; align-items: center; gap: .4rem;
   padding: .45rem .7rem;
@@ -1470,23 +1491,23 @@ body {
 /* ── Relocation result sessions + RMS stats ──────────────────────────────────── */
 .reloc-sess-row {
   display: flex; align-items: center; gap: .5rem;
-  padding: .4rem .55rem; border: 1px solid #1e293b; border-radius: 6px;
-  background: #0e1626; margin-bottom: .35rem; font-size: .68rem;
+  padding: .4rem .55rem; border: 1px solid var(--border); border-radius: 6px;
+  background: var(--bg-card); margin-bottom: .35rem; font-size: .68rem;
 }
-.reloc-sess-row:hover { border-color: #6366f1; background: #111c30; }
-.reloc-sess-id   { font-family: monospace; color: #94a3b8; }
-.reloc-sess-mode { color: #a5b4fc; font-weight: 600; }
-.reloc-sess-ev   { color: #5eead4; }
-.reloc-sess-ts   { color: #475569; font-size: .62rem; }
+.reloc-sess-row:hover { border-color: #6366f1; background: rgba(99,102,241,.10); }
+.reloc-sess-id   { font-family: monospace; color: var(--text-muted); }
+.reloc-sess-mode { color: var(--rm-purple); font-weight: 600; }
+.reloc-sess-ev   { color: var(--rm-teal); }
+.reloc-sess-ts   { color: var(--text-muted); font-size: .62rem; }
 
 /* Tabel statistik RMS residual relokasi */
 .reloc-stats-tbl { width: 100%; border-collapse: collapse; font-size: .68rem; }
 .reloc-stats-tbl th, .reloc-stats-tbl td {
-  padding: .32rem .5rem; text-align: right; border-bottom: 1px solid #1e293b; white-space: nowrap;
+  padding: .32rem .5rem; text-align: right; border-bottom: 1px solid var(--border); white-space: nowrap;
 }
-.reloc-stats-tbl th { color: #94a3b8; font-weight: 600; background: #0e1626; text-align: right; }
-.reloc-stats-tbl th:first-child, .reloc-stats-tbl td:first-child { text-align: left; color: #a5b4fc; font-weight: 600; }
-.reloc-stats-tbl tr:hover td { background: #0e1626; }
+.reloc-stats-tbl th { color: var(--text-muted); font-weight: 600; background: var(--bg-input); text-align: right; }
+.reloc-stats-tbl th:first-child, .reloc-stats-tbl td:first-child { text-align: left; color: var(--rm-purple); font-weight: 600; }
+.reloc-stats-tbl tr:hover td { background: var(--bg-input); }
 .mech-row:hover td { background: rgba(96,165,250,.08); }
 .mech-row td:has(.mech-thumb) { position: relative; overflow: visible; }
 .mech-thumb {
@@ -1515,11 +1536,11 @@ body {
   box-shadow: 0 4px 16px rgba(0,0,0,.7);
 }
 .reloc-sm-chip {
-  background: #0e1626; border: 1px solid #1e293b; border-radius: 7px;
+  background: var(--bg-input); border: 1px solid var(--border); border-radius: 7px;
   padding: .35rem .7rem; min-width: 78px; text-align: center;
 }
-.reloc-sm-chip .v { font-size: .92rem; font-weight: 700; color: #e2e8f0; }
-.reloc-sm-chip .l { font-size: .58rem; color: #64748b; text-transform: uppercase; letter-spacing: .03em; }
+.reloc-sm-chip .v { font-size: .92rem; font-weight: 700; color: var(--text-main); }
+.reloc-sm-chip .l { font-size: .58rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: .03em; }
 
 /* Progress bar overlay View Result (loading catalog in percent) */
 .rm-loading-bar {
@@ -1535,11 +1556,11 @@ body {
 /* ── Cross-Correlation Modal ── */
 .cc-pair-card {
   display: flex; flex-direction: column; align-items: center; gap: 1px;
-  background: #0e1626; border: 1px solid #1e293b; border-radius: 7px;
+  background: var(--bg-input); border: 1px solid var(--border); border-radius: 7px;
   padding: .4rem .6rem; cursor: pointer; transition: border-color .15s;
   min-width: 96px; text-align: center;
 }
-.cc-pair-card:hover { border-color: #38bdf8; background: #0c2038; }
+.cc-pair-card:hover { border-color: #38bdf8; background: rgba(56,189,248,.10); }
 
 /* ══ Presentation Builder ══════════════════════════════════════════════════ */
 .pres-builder-wrap {

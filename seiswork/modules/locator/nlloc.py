@@ -127,12 +127,12 @@ class NLLocLocator:
         grid_dir  = self.lcfg.get("grid_dir", os.path.join(self.base_dir, "config", "nlloc_grids"))
         prefix    = self.lcfg.get("model_prefix", "layer")
         grid_dir, prefix = self._ensure_grid(grid_dir, prefix)
-        method    = self.lcfg.get("grid_search", "MISFIT")
+        method    = self.lcfg.get("grid_search", "OCT")
         # LOCGRID save flag must be SAVE: with NO_SAVE, NLLoc still logs
         # "Finished location" but writes zero output files (no .hyp/.hdr),
-        # so _parse_hyp_files() comes back empty. Confirmed with both MISFIT
-        # and OCT search methods. `save_scatter` instead controls post-run
-        # cleanup of the bulky per-event grid files - see _cleanup_grid_files().
+        # so _parse_hyp_files() comes back empty. `save_scatter` instead
+        # controls post-run cleanup of the bulky per-event grid files -
+        # see _cleanup_grid_files().
         save_flag = "SAVE"
         reg       = self.reg
 
@@ -177,7 +177,7 @@ LOCFILES {obs_file} NLLOC_OBS \
  {os.path.join(self.out_dir, 'loc', 'loc')}
 
 LOCHYPOUT SAVE_NLLOC_ALL SAVE_HYPOINV_SUM
-LOCSEARCH {method} 10000 5000 0.01 8
+LOCSEARCH {method} 8 8 8 0.01 50000 5000 0 1
 LOCGRID {x_num} {y_num} {z_num}  {x_origin:.1f} {y_origin:.1f} 0.0   {dx:.1f} {dy:.1f} {dz:.1f}  MISFIT {save_flag}
 LOCMETH EDT_OT_WT 9999.0 4 -1 -1 2 -1.0 0
 LOCGAU 0.2 0.0

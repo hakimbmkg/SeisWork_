@@ -300,7 +300,12 @@ def catalog_picks_to_hypodd_phase(cat_df: pd.DataFrame, picks_df: pd.DataFrame,
                     tt = (pt - ot0).total_seconds()
                     sta = str(pk.get("station","????"))[:6]
                     ph  = str(pk.get("phase","P"))[0].upper()
-                    wt  = float(pk.get("prob", pk.get("phase_score", 1.0)))
+                    wt = pk.get("prob")
+                    if pd.isna(wt):
+                        wt = pk.get("phase_score")
+                    if pd.isna(wt):
+                        wt = 1.0
+                    wt = float(wt)
                     f.write(f"{sta:<6}   {tt:7.4f}  {wt:.4f}   {ph}\n")
                     n_pick_rows += 1
                 except Exception:
