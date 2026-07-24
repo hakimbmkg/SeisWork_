@@ -3338,6 +3338,27 @@
                 <span class="rm-ctrl-val" id="rm-xsw-v">15 km</span>
               </div>
               <div class="rm-ctrl-sep"></div>
+              <div class="rm-ctrl-row" style="gap:.3rem;align-items:center;flex-wrap:nowrap">
+                <button class="btn-sw btn-ghost-sw btn-sm-sw" id="rm-poly-draw-btn" onclick="_rmTogglePolyDraw()"
+                        title="Draw a region (click to add points; a straight rectangle is just 4 points) to filter the map to that area"
+                        style="padding:2px 8px;font-size:.78rem">
+                  <i class="bi bi-pentagon"></i>&thinsp;Draw region
+                </button>
+                <button class="btn-sw btn-ghost-sw btn-sm-sw" id="rm-poly-finish-btn" onclick="_rmFinishPolyDraw()"
+                        title="Finish region (needs at least 3 points)" style="display:none;padding:2px 7px;font-size:.78rem">
+                  <i class="bi bi-check-lg"></i>
+                </button>
+                <button class="btn-sw btn-ghost-sw btn-sm-sw" id="rm-poly-cancel-btn" onclick="_rmCancelPolyDraw()"
+                        title="Cancel drawing (Esc)" style="display:none;padding:2px 7px;font-size:.78rem">
+                  <i class="bi bi-x-lg"></i>
+                </button>
+                <button class="btn-sw btn-ghost-sw btn-sm-sw" id="rm-poly-clear-btn" onclick="_rmClearPolyFilter()"
+                        title="Clear region filter" style="display:none;padding:2px 8px;font-size:.78rem">
+                  <i class="bi bi-x-circle"></i>&thinsp;Clear filter
+                </button>
+                <span id="rm-poly-hint" style="font-size:.6rem;color:#64748b;display:none">Click the map to add points · Finish needs ≥3</span>
+              </div>
+              <div class="rm-ctrl-sep"></div>
               <label class="rm-lay-tog"><input type="checkbox" id="rm-tog-fault"    checked onchange="_rmLayerToggle('fault',    this.checked)"><span>Faults</span></label>
               <label class="rm-lay-tog"><input type="checkbox" id="rm-tog-faultsym" checked onchange="_rmLayerToggle('faultsym', this.checked)"><span>Fault Sym</span></label>
               <label class="rm-lay-tog"><input type="checkbox" id="rm-tog-volcano" checked onchange="_rmLayerToggle('volcano', this.checked)"><span>Volcano</span></label>
@@ -3567,6 +3588,10 @@
           <input type="checkbox" id="rm-wv-cc-tog" onchange="RMWV.toggleCorrStack(this.checked)">
           <span style="font-size:.68rem">CC &amp; Stack</span>
         </label>
+        <label class="rm-lay-tog" id="rm-wv-stations-tog-lbl" style="display:none" title="Recording stations and their full phase picks, straight from the source catalog — includes stations with no local waveform">
+          <input type="checkbox" id="rm-wv-stations-tog" checked onchange="RMWV.toggleStationsTable(this.checked)">
+          <span style="font-size:.68rem">Stations &amp; Phases</span>
+        </label>
         <button class="btn-sw btn-ghost-sw btn-sm-sw" onclick="RMWV.closeModal()" title="Close (Esc)"><i class="bi bi-x-lg"></i></button>
       </div>
       <div class="rm-drawer-body" style="display:flex;flex-direction:column">
@@ -3601,6 +3626,13 @@
               <canvas id="rm-wv-ccmat-canvas" style="display:block"></canvas>
             </div>
           </div>
+        </div>
+        <div class="rm-wv-stations-row" id="rm-wv-stations-row" style="display:none;flex-direction:column;gap:.3rem;padding:.5rem .6rem;border-top:1px solid var(--border);max-height:180px;overflow:auto">
+          <div style="display:flex;align-items:center;gap:.4rem">
+            <i class="bi bi-geo-alt" style="color:#60a5fa;font-size:.7rem"></i>
+            <span id="rm-wv-stations-info" style="font-size:.63rem;color:#475569"></span>
+          </div>
+          <table id="rm-wv-stations-table" style="width:100%;border-collapse:collapse;font-size:.66rem;font-family:monospace"></table>
         </div>
       </div>
     </div>

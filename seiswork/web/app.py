@@ -4949,6 +4949,35 @@ def remove_ql_job(job_id):
 _BED = "http://quakeml.org/xmlns/bed/1.2"
 
 
+def _xml_iter_valid_events(root, B):
+    """Yield (event_id, ev_el, orig_el) for exactly the events
+    _xml_fast_parse_events() keeps (has an origin, with parseable lat/lon) —
+    skipped events do NOT consume a number. _ql_picks_index() walks this same
+    generator so its event_id numbering can never drift from the event list's,
+    which would silently attach a station's picks to the wrong event."""
+    n = 0
+    for ev_el in root.iter(f"{{{B}}}event"):
+        pref_orig = ev_el.findtext(f"{{{B}}}preferredOriginID") or ""
+        orig = None
+        for o in ev_el.findall(f"{{{B}}}origin"):
+            if not pref_orig or o.get("publicID") == pref_orig:
+                orig = o; break
+        if orig is None:
+            orig = ev_el.find(f"{{{B}}}origin")
+        if orig is None:
+            continue
+        try:
+            float(orig.findtext(f".//{{{B}}}latitude/{{{B}}}value") or "")
+        except (ValueError, TypeError):
+            continue
+        try:
+            float(orig.findtext(f".//{{{B}}}longitude/{{{B}}}value") or "")
+        except (ValueError, TypeError):
+            continue
+        n += 1
+        yield f"ql_{n:06d}", ev_el, orig
+
+
 def _xml_fast_parse_events(xml_file: Path) -> list[dict]:
     """Parse QuakeML using ElementTree (70x faster than ObsPy).
     Only reads origin + magnitude; skips picks/arrivals/waveforms.
@@ -4958,21 +4987,10 @@ def _xml_fast_parse_events(xml_file: Path) -> list[dict]:
     B = _BED
     tree = ET.parse(str(xml_file))
     root = tree.getroot()
-    events, n = [], 0
+    events = []
 
-    for ev_el in root.iter(f"{{{B}}}event"):
-        pref_orig = ev_el.findtext(f"{{{B}}}preferredOriginID") or ""
-        pref_mag  = ev_el.findtext(f"{{{B}}}preferredMagnitudeID") or ""
-
-        # preferred origin (or the first origin)
-        orig = None
-        for o in ev_el.findall(f"{{{B}}}origin"):
-            if not pref_orig or o.get("publicID") == pref_orig:
-                orig = o; break
-        if orig is None:
-            orig = ev_el.find(f"{{{B}}}origin")
-        if orig is None:
-            continue
+    for event_id, ev_el, orig in _xml_iter_valid_events(root, B):
+        pref_mag = ev_el.findtext(f"{{{B}}}preferredMagnitudeID") or ""
 
         ot_raw = orig.findtext(f".//{{{B}}}time/{{{B}}}value") or ""
         try:
@@ -4980,14 +4998,8 @@ def _xml_fast_parse_events(xml_file: Path) -> list[dict]:
         except Exception:
             ot = ot_raw[:23]
 
-        try:
-            lat = float(orig.findtext(f".//{{{B}}}latitude/{{{B}}}value") or "")
-        except (ValueError, TypeError):
-            continue
-        try:
-            lon = float(orig.findtext(f".//{{{B}}}longitude/{{{B}}}value") or "")
-        except (ValueError, TypeError):
-            continue
+        lat = float(orig.findtext(f".//{{{B}}}latitude/{{{B}}}value"))
+        lon = float(orig.findtext(f".//{{{B}}}longitude/{{{B}}}value"))
         try:
             dep = round(float(orig.findtext(f".//{{{B}}}depth/{{{B}}}value") or "") / 1000.0, 2)
         except (ValueError, TypeError):
@@ -5015,9 +5027,8 @@ def _xml_fast_parse_events(xml_file: Path) -> list[dict]:
                     pass
                 break
 
-        n += 1
         events.append({
-            "event_id": f"ql_{n:06d}",
+            "event_id": event_id,
             "datetime": ot,
             "lat"     : lat,
             "lon"     : lon,
@@ -5051,6 +5062,91 @@ def _xml_to_result_events(xml_file: Path) -> list[dict]:
         pass
 
     return events
+
+
+# QuakeML picks/arrivals (station, phase, time, azimuth, distance, residual)
+# indexed by event_id (ql_%06d, aligned with _xml_fast_parse_events). Cached
+# per (xml path, mtime) — same idiom as _pha_picks_index/_cnv_picks_index.
+_QL_PICKS_CACHE: dict = {}
+_QL_PICKS_LOCK = threading.Lock()
+
+
+def _ql_picks_index(xml_file: Path) -> dict:
+    """Parse QuakeML <pick>/<arrival> -> {event_id: {sta: {net, phases:
+    {phase: abs_datetime}, azimuth, distance, residual: {phase: float}}}}.
+    Keeps every phase code present (P/S/Pn/Sn/…) — this feeds the "complete
+    phases" station table, unlike the P/S-only overlay used on the waveform canvas.
+    """
+    import xml.etree.ElementTree as ET
+
+    pf = Path(xml_file)
+    if not pf.exists():
+        return {}
+    try:
+        mt = pf.stat().st_mtime
+    except OSError:
+        return {}
+    key = str(pf)
+    with _QL_PICKS_LOCK:
+        hit = _QL_PICKS_CACHE.get(key)
+        if hit and hit[0] == mt:
+            return hit[1]
+
+    B = _BED
+    out: dict = {}
+    tree = ET.parse(str(pf))
+    root = tree.getroot()
+
+    for event_id, ev_el, _pref_orig in _xml_iter_valid_events(root, B):
+        pick_map = {}
+        for pick_el in ev_el.findall(f"{{{B}}}pick"):
+            pid = pick_el.get("publicID") or ""
+            wf  = pick_el.find(f"{{{B}}}waveformID")
+            sta = (wf.get("stationCode") or "").strip() if wf is not None else ""
+            net = (wf.get("networkCode") or "").strip() if wf is not None else ""
+            t   = pick_el.findtext(f".//{{{B}}}time/{{{B}}}value") or ""
+            if pid and sta:
+                pick_map[pid] = {"net": net, "sta": sta, "time": t}
+
+        picks_by_sta: dict = {}
+        for orig in ev_el.findall(f"{{{B}}}origin"):
+            for arr in orig.findall(f"{{{B}}}arrival"):
+                phase   = (arr.findtext(f"{{{B}}}phase") or "").strip()
+                pick_id = arr.findtext(f"{{{B}}}pickID") or ""
+                pk = pick_map.get(pick_id)
+                if not pk or not phase:
+                    continue
+                try:
+                    pt = datetime.fromisoformat(pk["time"].replace("Z", "+00:00")).replace(tzinfo=None)
+                except Exception:
+                    continue
+
+                def _f(tag):
+                    v = arr.findtext(f"{{{B}}}{tag}")
+                    try:
+                        return float(v) if v is not None else None
+                    except (ValueError, TypeError):
+                        return None
+
+                rec = picks_by_sta.setdefault(pk["sta"], {
+                    "net": pk["net"], "phases": {}, "residual": {},
+                    "azimuth": None, "distance": None,
+                })
+                rec["phases"][phase] = pt
+                resid = _f("timeResidual")
+                if resid is not None:
+                    rec["residual"][phase] = resid
+                if rec["azimuth"] is None:
+                    rec["azimuth"] = _f("azimuth")
+                if rec["distance"] is None:
+                    rec["distance"] = _f("distance")
+
+        if picks_by_sta:
+            out[event_id] = picks_by_sta
+
+    with _QL_PICKS_LOCK:
+        _QL_PICKS_CACHE[key] = (mt, out)
+    return out
 
 
 @app.route("/api/catalog/as_result/<job_id>", methods=["GET"])
@@ -10136,7 +10232,76 @@ def _resolve_event_picks(cfg_id, job_id, event_id):
         "ev": ev, "ot": ot, "picks_by_sta": picks_by_sta,
         "picks_fallback": picks_fallback, "picks_from_real": picks_from_real,
         "picks_from_pha": picks_from_pha, "picks_from_cnv": picks_from_cnv,
+        "all_picks": None,
     }, None
+
+
+def _resolve_ql_event_picks(job_id, event_id):
+    """Same contract as _resolve_event_picks(), sourced from a QuakeLink job
+    (TMP_DIR/ql_jobs/<job_id>) instead of a pipeline job. Waveforms still come
+    from the SDS archive of the config the catalog was downloaded under
+    (job's own "cfg_id", set at download time from SW.activeConfigId)."""
+    sf = TMP_DIR / "ql_jobs" / job_id / "status.json"
+    if not sf.exists():
+        return None, ({"error": "QuakeLink job not found"}, 404)
+    status = json.loads(sf.read_text())
+
+    src_cfg_id = status.get("cfg_id", "")
+    if not src_cfg_id:
+        return None, ({"error": "This QuakeLink catalog wasn't downloaded under an active project — no SDS archive to read waveforms from"}, 400)
+    meta_file = CONFIGS_DIR / src_cfg_id / "meta.json"
+    if not meta_file.exists():
+        return None, ({"error": "Config not found"}, 404)
+    meta     = json.loads(meta_file.read_text())
+    wv_cfg   = meta.get("waveform", {})
+    sds_path = wv_cfg.get("path") or wv_cfg.get("fdsn", {}).get("output_path", "")
+    if not sds_path or wv_cfg.get("path_type", "sds") != "sds":
+        return None, ({"error": "SDS waveform path not configured for this config"}, 400)
+
+    xml_file = Path(status.get("output_file", ""))
+    if not xml_file.exists():
+        return None, ({"error": "Catalog XML not found"}, 404)
+
+    events = _xml_to_result_events(xml_file)
+    ev = next((e for e in events if str(e.get("event_id")) == str(event_id)), None)
+    if ev is None:
+        return None, ({"error": f"Event {event_id} not found in this catalog"}, 404)
+
+    ot_str = str(ev.get("datetime", ""))
+    try:
+        ot = datetime.fromisoformat(ot_str.replace("Z", "").split("+")[0])
+    except Exception:
+        return None, ({"error": f"Cannot parse event time: {ot_str}"}, 400)
+
+    all_picks = _ql_picks_index(xml_file).get(str(event_id), {})
+    picks_by_sta: dict = {}
+    for sta, info in all_picks.items():
+        phases = {ph: round((pt - ot).total_seconds(), 2)
+                  for ph, pt in info["phases"].items() if ph in ("P", "S")}
+        if phases:
+            picks_by_sta[sta] = {"net": info["net"], "phases": phases}
+
+    picks_fallback = False
+    if not picks_by_sta:
+        picks_fallback = True
+        for sid, net in _cfg_stations_nearest(meta, ev, 20):
+            picks_by_sta[sid] = {"net": net, "phases": {}}
+
+    return {
+        "meta": meta, "sds_path": sds_path, "job_dir": None, "s": status, "method": "QuakeLink",
+        "ev": ev, "ot": ot, "picks_by_sta": picks_by_sta,
+        "picks_fallback": picks_fallback, "picks_from_real": False,
+        "picks_from_pha": False, "picks_from_cnv": False,
+        "all_picks": all_picks,
+    }, None
+
+
+def _resolve_event_picks_any(cfg_id, job_id, event_id):
+    """Dispatch to _resolve_ql_event_picks() for the QuakeLink pseudo-config
+    ('__ql__'), otherwise the normal pipeline-job resolver."""
+    if cfg_id == "__ql__":
+        return _resolve_ql_event_picks(job_id, event_id)
+    return _resolve_event_picks(cfg_id, job_id, event_id)
 
 
 @app.route("/api/result/<cfg_id>/waveform", methods=["GET"])
@@ -10153,7 +10318,7 @@ def result_waveform(cfg_id):
     if not job_id or not event_id:
         return jsonify({"error": "job_id and event_id required"}), 400
 
-    ctx, err = _resolve_event_picks(cfg_id, job_id, event_id)
+    ctx, err = _resolve_event_picks_any(cfg_id, job_id, event_id)
     if err:
         return jsonify(err[0]), err[1]
     meta, sds_path, method = ctx["meta"], ctx["sds_path"], ctx["method"]
@@ -10162,6 +10327,7 @@ def result_waveform(cfg_id):
     picks_from_real = ctx["picks_from_real"]
     picks_from_pha  = ctx["picks_from_pha"]
     picks_from_cnv  = ctx["picks_from_cnv"]
+    all_picks       = ctx["all_picks"]
 
     PRE_SEC  = 10
     POST_SEC = 80
@@ -10257,6 +10423,22 @@ def result_waveform(cfg_id):
         except Exception as ex:
             traces.append({"sta": sta, "net": net, "error": str(ex)})
 
+    # Complete recording-station/phase list straight from the source (QuakeML
+    # picks+arrivals for QuakeLink events) — independent of whether a local
+    # SDS waveform was found, so out-of-network stations still show up.
+    station_phases = []
+    if all_picks:
+        waveform_stas = {t["sta"] for t in traces if t.get("data")}
+        for sta, info in all_picks.items():
+            phases = {ph: round((pt - ot).total_seconds(), 2) for ph, pt in info.get("phases", {}).items()}
+            station_phases.append({
+                "sta": sta, "net": info.get("net", ""), "phases": phases,
+                "azimuth": info.get("azimuth"), "distance": info.get("distance"),
+                "residual": info.get("residual", {}),
+                "has_waveform": sta in waveform_stas,
+            })
+        station_phases.sort(key=lambda s: min(s["phases"].values()) if s["phases"] else float("inf"))
+
     dep = ev.get("depth_km")
     mag = ev.get("mag")
     rms = ev.get("rms")
@@ -10275,6 +10457,7 @@ def result_waveform(cfg_id):
         "picks_from_pha" : picks_from_pha,
         "picks_from_cnv" : picks_from_cnv,
         "traces": traces,
+        "station_phases": station_phases,
     })
 
 
@@ -10295,7 +10478,7 @@ def result_waveform_corr_stack(cfg_id):
     if not job_id or not event_id:
         return jsonify({"error": "job_id and event_id required"}), 400
 
-    ctx, err = _resolve_event_picks(cfg_id, job_id, event_id)
+    ctx, err = _resolve_event_picks_any(cfg_id, job_id, event_id)
     if err:
         return jsonify(err[0]), err[1]
     sds_path, ot, picks_by_sta = ctx["sds_path"], ctx["ot"], ctx["picks_by_sta"]

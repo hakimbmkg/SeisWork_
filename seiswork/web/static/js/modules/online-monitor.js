@@ -1460,16 +1460,21 @@ class OnlineMonitorModule {
     this._realtimeTimer = setInterval(() => this._pollRealtime(), 5000);
     this._pollRealtime();
     this._maybeAutoStartRealtime();
+    // Once the operator has run HypoDD at least once, keep it fresh: check every
+    // 10 min whether new events arrived and, if so, re-run automatically (see
+    // _autoRelocCheck). Never auto-starts a relocation that was never requested.
+    this._relocAutoTimer = setInterval(() => this._autoRelocCheck(), 10 * 60 * 1000);
   }
 
   _stopPoll() {
     this._stopWaveformSSE();
-    if (this._statusTimer)  { clearInterval(this._statusTimer);  this._statusTimer  = null; }
-    if (this._axisTimer)    { clearInterval(this._axisTimer);    this._axisTimer    = null; }
-    if (this._specTimer)    { clearInterval(this._specTimer);    this._specTimer    = null; }
-    if (this._diagTimer)    { clearInterval(this._diagTimer);    this._diagTimer    = null; }
-    if (this._realtimeTimer){ clearInterval(this._realtimeTimer);this._realtimeTimer= null; }
-    if (this._pickLogTimer) { clearInterval(this._pickLogTimer); this._pickLogTimer = null; }
+    if (this._statusTimer)   { clearInterval(this._statusTimer);   this._statusTimer   = null; }
+    if (this._axisTimer)     { clearInterval(this._axisTimer);     this._axisTimer     = null; }
+    if (this._specTimer)     { clearInterval(this._specTimer);     this._specTimer     = null; }
+    if (this._diagTimer)     { clearInterval(this._diagTimer);     this._diagTimer     = null; }
+    if (this._realtimeTimer) { clearInterval(this._realtimeTimer); this._realtimeTimer = null; }
+    if (this._pickLogTimer)  { clearInterval(this._pickLogTimer);  this._pickLogTimer  = null; }
+    if (this._relocAutoTimer){ clearInterval(this._relocAutoTimer);this._relocAutoTimer= null; }
   }
 
   _pausePoll() {
@@ -1487,6 +1492,7 @@ class OnlineMonitorModule {
     this._diagTimer     = setInterval(() => this._updateNetStatus(), 2000);
     this._realtimeTimer = setInterval(() => this._pollRealtime(), 5000);
     this._pickLogTimer  = setInterval(() => this._pollPickLog(), 2000);
+    this._relocAutoTimer = setInterval(() => this._autoRelocCheck(), 10 * 60 * 1000);
     this._tick();
   }
 
@@ -4096,12 +4102,37 @@ class OnlineMonitorModule {
     if (!result?.events?.length) return;
     const n = result.events.length;
     this._relocEvents = result.events;
+    // Snapshot of how many events were in the catalog when this run started —
+    // _autoRelocCheck compares against this to know a re-run is actually needed.
+    this._relocEventCountAtLastRun = (this._events || []).length;
     this._showingReloc = true;
     this._plotEventsOnMap(result.events);
     this._updateRelocToggleBtn();
     const badge = document.getElementById('om-hypodd-status');
     if (badge) { badge.style.display = ''; badge.textContent = `✓ ${n} terelokasi`; }
     console.log(`[OnlineHypoDD] ${n} events shown on the map (global IASP91)`);
+  }
+
+  // Called every 10 min (see _relocAutoTimer). Only keeps a relocation that the
+  // operator has already requested at least once (state 'done'/'error') up to
+  // date — never auto-starts HypoDD for a session that never asked for it, and
+  // never overlaps a run already in progress (mirrors the backend's own guard).
+  async _autoRelocCheck() {
+    let status;
+    try {
+      status = (await (await fetch('/api/online/realtime/reloc')).json()).status;
+    } catch (_) { return; }
+    if (!status || (status.state !== 'done' && status.state !== 'error')) return;
+    const curN = (this._events || []).length;
+    if (curN <= (this._relocEventCountAtLastRun || 0)) return; // nothing new since last run
+    try {
+      const r = await fetch('/api/online/realtime/reloc', { method: 'POST' });
+      const d = await r.json();
+      if (r.ok && d.ok) {
+        console.log('[OnlineHypoDD] Auto re-relocation started (new events since last run)');
+        this._pollOnlineHypoDD();
+      }
+    } catch (_) { /* transient — next tick will retry */ }
   }
 
   toggleRelocView() {

@@ -80,6 +80,7 @@ class ResultViewerWaveformModule {
 
     this.attachEvents();
     this.renderCanvas();
+    this.renderStationTable(data.station_phases);
 
     // Auto-load spec if toggle already on
     const tog = document.getElementById('rm-wv-spec-tog');
@@ -464,6 +465,58 @@ class ResultViewerWaveformModule {
     drawCCMatrix(document.getElementById('rm-wv-ccmat-canvas'), this.corrStack && this.corrStack.cc);
   }
 
+  // --- Controller+View (recording stations & complete phase list, straight
+  // from the source catalog's picks/arrivals — includes stations with no
+  // local SDS waveform, unlike the canvas rows above which need one). ---
+  toggleStationsTable(on) {
+    const rowEl = document.getElementById('rm-wv-stations-row');
+    if (rowEl) rowEl.style.display = on ? 'flex' : 'none';
+  }
+
+  renderStationTable(stationPhases) {
+    const lblEl = document.getElementById('rm-wv-stations-tog-lbl');
+    const rowEl = document.getElementById('rm-wv-stations-row');
+    const infoEl = document.getElementById('rm-wv-stations-info');
+    const tblEl = document.getElementById('rm-wv-stations-table');
+    if (!lblEl || !rowEl || !infoEl || !tblEl) return;
+
+    if (!stationPhases || !stationPhases.length) {
+      lblEl.style.display = 'none';
+      rowEl.style.display = 'none';
+      tblEl.innerHTML = '';
+      return;
+    }
+
+    lblEl.style.display = 'flex';
+    const tog = document.getElementById('rm-wv-stations-tog');
+    rowEl.style.display = (tog && tog.checked) ? 'flex' : 'none';
+    infoEl.textContent = `${stationPhases.length} recording station(s) — from source catalog picks/arrivals`;
+
+    const fmtT = v => (v == null ? '–' : (v >= 0 ? '+' : '') + v.toFixed(2) + 's');
+    const rows = stationPhases.map(s => {
+      const phList = Object.keys(s.phases).sort().map(ph => {
+        const resid = s.residual && s.residual[ph] != null ? ` (res ${s.residual[ph].toFixed(2)}s)` : '';
+        return `<b>${ph}</b> ${fmtT(s.phases[ph])}${resid}`;
+      }).join(' &nbsp; ');
+      const dist = s.distance != null ? s.distance.toFixed(2) + '°' : '–';
+      const az   = s.azimuth != null ? s.azimuth.toFixed(0) + '°' : '–';
+      const wv   = s.has_waveform
+        ? '<span style="color:#22c55e">✓ waveform</span>'
+        : '<span style="color:#64748b">no local data</span>';
+      // This modal keeps a fixed dark background regardless of the app's
+      // light/dark preference (see .rm-modal in seiswork.css), so cells need
+      // an explicit light color here — falling back to the inherited
+      // var(--text-main) goes near-black-on-navy in light-theme browsers.
+      return `<tr>
+        <td style="padding:1px 6px 1px 0;white-space:nowrap;font-weight:700;color:#e2e8f0">${s.net}.${s.sta}</td>
+        <td style="padding:1px 6px;color:#e2e8f0">${phList}</td>
+        <td style="padding:1px 6px;white-space:nowrap;color:#94a3b8">dist ${dist} · az ${az}</td>
+        <td style="padding:1px 0;white-space:nowrap">${wv}</td>
+      </tr>`;
+    });
+    tblEl.innerHTML = rows.join('');
+  }
+
   // --- Controller (modal close) ---
   closeModal() {
     document.getElementById('rm-wv-bd').classList.add('hidden');
@@ -477,6 +530,10 @@ class ResultViewerWaveformModule {
     if (ccTogEl) ccTogEl.checked = false;
     const ccRowEl = document.getElementById('rm-wv-cc-row');
     if (ccRowEl) ccRowEl.style.display = 'none';
+    const staLblEl = document.getElementById('rm-wv-stations-tog-lbl');
+    if (staLblEl) staLblEl.style.display = 'none';
+    const staRowEl = document.getElementById('rm-wv-stations-row');
+    if (staRowEl) staRowEl.style.display = 'none';
     this.reset();
   }
 }

@@ -2421,6 +2421,8 @@ async function openQlCatalogInResultModal(jobId) {
   _RM.activeJob = null;
   _RM.mgMin = -9; _RM.mgMax = 9; _RM.depMax = 700; _RM.xsHalf = 50; _RM.az = 0;
   _RM.yearMin = null; _RM.yearMax = null;
+  _RM.polyDrawMode = false; _RM.drawVerts = []; _RM.filterPoly = null;
+  _RM.filterPolyLayer = null; _RM.drawPreviewLayer = null;
   { const ye1 = document.getElementById('rm-year-min'), ye2 = document.getElementById('rm-year-max');
     if (ye1) ye1.value = ''; if (ye2) ye2.value = ''; }
   _RM.showFault = true; _RM.showFaultSym = true; _RM.showVolcano = true; _RM.showStation = false;
@@ -5702,6 +5704,9 @@ const _RM = {
   showSlab2d: true, showTopo3d: true, showFault3d: true,
   showSlabMap: true,   // Slab2 depth contours drawn on the 2-D Leaflet map
   lgSlabMap: null,     // Leaflet layerGroup for the map slab contours
+  // Region-draw filter (rectangle or freeform polygon, click-per-vertex)
+  polyDrawMode: false, drawVerts: [], filterPoly: null,
+  filterPolyLayer: null, drawPreviewLayer: null,
   // 2D map time animation
   playing: false, playTimer: null, playFrame: 0, playSubset: null,
   // 3D independent time animation
@@ -5784,6 +5789,8 @@ async function openResultModal() {
   { const ye1 = document.getElementById('rm-year-min'), ye2 = document.getElementById('rm-year-max');
     if (ye1) ye1.value = ''; if (ye2) ye2.value = ''; }
   _RM.mgMin = -9; _RM.mgMax = 9; _RM.depMax = 200; _RM.yearMin = null; _RM.yearMax = null; _RM.xsHalf = 15; _RM.az = 0;
+  _RM.polyDrawMode = false; _RM.drawVerts = []; _RM.filterPoly = null;
+  _RM.filterPolyLayer = null; _RM.drawPreviewLayer = null;
   _RM.showFault = true; _RM.showFaultSym = true; _RM.showVolcano = true; _RM.showStation = true;
   _RM.showXS = true; _RM.showSlab = true; _RM.showTopo = true; _RM.showSlab3d = true; _RM.showVol3d = true;
   _RM.showCoast3d = true; _RM.showSlab2d = true; _RM.showTopo3d = true; _RM.showFault3d = true;
@@ -6011,7 +6018,12 @@ async function _rmRefreshJobList() {
 // whatever pipeline session is currently shown in the Result Viewer.
 function rmOpenCatFilter() {
   const job = _RM.activeJob;
-  if (!job) {
+  // _RM.activeJob is NOT null for a QuakeLink catalog (catalog_as_result()
+  // returns a real job object with method:"QuakeLink") — so this needs its
+  // own check. Without it, execution fell through to AL.openCatFilter("QuakeLink"),
+  // which has no entry in CFM_STEPMAP for that method and returns silently
+  // with zero feedback, looking like the button does nothing at all.
+  if (!job || _RM.cfgId === '__ql__') {
     alert('Filter is only available for a pipeline result session, not a QuakeLink download.');
     return;
   }
@@ -6136,8 +6148,91 @@ function _rmActiveEvents() {
         if (_RM.yearMin != null && yr < _RM.yearMin) return false;
         if (_RM.yearMax != null && yr > _RM.yearMax) return false;
       }
+      if (_RM.filterPoly && !_rmPointInPolygon(ev.lat, ev.lon, _RM.filterPoly)) return false;
       return true;
     });
+}
+
+// ── Region-draw filter (rectangle or freeform polygon) ────────────────────────
+// A straight rectangle is just a 4-point polygon, so one click-per-vertex tool
+// covers both cases — no separate drag-a-box system needed. Filtering is
+// wired through _rmActiveEvents() above, so it automatically applies to the
+// map markers, NS/EW cross-sections, magnitude/time plot and stats bar alike.
+function _rmPointInPolygon(lat, lon, poly) {
+  // Ray-casting test, planar — fine at the AOI scale already assumed elsewhere
+  // (e.g. the rotatable cross-section band math).
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const [yi, xi] = poly[i], [yj, xj] = poly[j];
+    const intersects = ((yi > lat) !== (yj > lat)) &&
+      (lon < (xj - xi) * (lat - yi) / (yj - yi) + xi);
+    if (intersects) inside = !inside;
+  }
+  return inside;
+}
+
+function _rmTogglePolyDraw() {
+  _RM.polyDrawMode ? _rmCancelPolyDraw() : _rmStartPolyDraw();
+}
+
+function _rmStartPolyDraw() {
+  if (!_RM.map) return;
+  _RM.polyDrawMode = true;
+  _RM.drawVerts = [];
+  _RM.map.getContainer().style.cursor = 'crosshair';
+  document.getElementById('rm-poly-draw-btn')?.classList.add('btn-draw-active');
+  document.getElementById('rm-poly-finish-btn').style.display = '';
+  document.getElementById('rm-poly-cancel-btn').style.display = '';
+  document.getElementById('rm-poly-hint').style.display = '';
+}
+
+function _rmPolyAddVertex(latlng) {
+  _RM.drawVerts.push([+latlng.lat.toFixed(4), +latlng.lng.toFixed(4)]);
+  if (_RM.drawPreviewLayer) { _RM.map.removeLayer(_RM.drawPreviewLayer); _RM.drawPreviewLayer = null; }
+  if (_RM.drawVerts.length >= 2) {
+    _RM.drawPreviewLayer = L.polygon(_RM.drawVerts, {
+      color: '#22d3ee', weight: 1.5, fillColor: '#22d3ee', fillOpacity: .06, dashArray: '4 3', interactive: false,
+    }).addTo(_RM.map);
+  }
+  const hint = document.getElementById('rm-poly-hint');
+  if (hint) hint.textContent = `${_RM.drawVerts.length} point(s) placed · Finish needs ≥3`;
+}
+
+function _rmFinishPolyDraw() {
+  if (_RM.drawVerts.length < 3) return;
+  _rmClearPolyFilter(false);   // drop any previous filter layer first
+  _RM.filterPoly = _RM.drawVerts.slice();
+  _RM.filterPolyLayer = L.polygon(_RM.filterPoly, {
+    color: '#22d3ee', weight: 2, fillColor: '#22d3ee', fillOpacity: .08, dashArray: '4 3', interactive: false,
+  }).addTo(_RM.map);
+  _rmExitPolyDrawUI();
+  document.getElementById('rm-poly-clear-btn').style.display = '';
+  _rmUpdate();
+}
+
+function _rmCancelPolyDraw() {
+  if (!_RM.polyDrawMode) return;
+  _RM.drawVerts = [];
+  if (_RM.drawPreviewLayer) { _RM.map.removeLayer(_RM.drawPreviewLayer); _RM.drawPreviewLayer = null; }
+  _rmExitPolyDrawUI();
+}
+
+function _rmExitPolyDrawUI() {
+  _RM.polyDrawMode = false;
+  if (_RM.map) _RM.map.getContainer().style.cursor = '';
+  document.getElementById('rm-poly-draw-btn')?.classList.remove('btn-draw-active');
+  document.getElementById('rm-poly-finish-btn').style.display = 'none';
+  document.getElementById('rm-poly-cancel-btn').style.display = 'none';
+  document.getElementById('rm-poly-hint').style.display = 'none';
+}
+
+function _rmClearPolyFilter(refresh = true) {
+  if (_RM.filterPolyLayer && _RM.map) { _RM.map.removeLayer(_RM.filterPolyLayer); }
+  _RM.filterPolyLayer = null;
+  _RM.filterPoly = null;
+  const btn = document.getElementById('rm-poly-clear-btn');
+  if (btn) btn.style.display = 'none';
+  if (refresh) _rmUpdate();
 }
 
 // ── Time animation (Play) ─────────────────────────────────────────────────────
@@ -6315,6 +6410,11 @@ function _rmInitMap() {
   if (_RM.map) { _RM.map.remove(); _RM.map = null; _RM.ewInit = _RM.nsInit = _RM.magInit = false; }
   // Reset 3D init so newPlot is called again with the new dataset bounds
   _RM.init3d = false;
+  // Previous map's layers are gone with it — drop the dangling refs (drawing
+  // itself, if in progress, is cancelled; the filter polygon coords survive
+  // in _RM.filterPoly and are redrawn below once the new map/layers exist).
+  _RM.polyDrawMode = false; _RM.drawVerts = [];
+  _RM.filterPolyLayer = null; _RM.drawPreviewLayer = null;
 
   const stas = _RM.data?.stations || [];
   if (stas.length) {
@@ -6360,6 +6460,7 @@ function _rmInitMap() {
     _rmUpdateBands(); _rmDrawNS(); _rmDrawEW();
   });
   _RM.map.on('click', e => {
+    if (_RM.polyDrawMode) { _rmPolyAddVertex(e.latlng); return; }
     _RM.cla = +e.latlng.lat.toFixed(4); _RM.clo = +e.latlng.lng.toFixed(4);
     _RM.xhair.setLatLng([_RM.cla, _RM.clo]);
     _rmUpdateBands(); _rmDrawNS(); _rmDrawEW();
@@ -6368,6 +6469,14 @@ function _rmInitMap() {
   // Layer groups
   _RM.lgEvs = L.layerGroup().addTo(_RM.map);
   _RM.lgSta = L.layerGroup().addTo(_RM.map);
+
+  // Redraw an existing region filter on the new map (its old layer died with
+  // the previous map instance above).
+  if (_RM.filterPoly && _RM.filterPoly.length >= 3) {
+    _RM.filterPolyLayer = L.polygon(_RM.filterPoly, {
+      color: '#22d3ee', weight: 2, fillColor: '#22d3ee', fillOpacity: .08, dashArray: '4 3', interactive: false,
+    }).addTo(_RM.map);
+  }
 
   // Slab2 depth contours on the map (uses the AOI slab already fetched)
   _rmBuildSlabMapLayer();
@@ -6554,7 +6663,7 @@ function _rmDrawNS() {
       const cd = d.points[0]?.customdata;
       if (cd?.eid) { const ev = _RM.activeJob.events.find(e => String(e.event_id) === String(cd.eid)); if (ev) _rmShowEventDetail({ ...ev, lat: parseFloat(ev.lat), lon: parseFloat(ev.lon), dep: parseFloat(ev.depth_km || 0), mag: ev.mag != null ? parseFloat(ev.mag) : null }); }
     });
-  } else { Plotly.react('rm-ns-plt', allTrs, ly); }
+  } else { Plotly.react('rm-ns-plt', allTrs, ly).catch(() => { }); }
 }
 
 function _rmDrawEW() {
@@ -6575,7 +6684,7 @@ function _rmDrawEW() {
       const cd = d.points[0]?.customdata;
       if (cd?.eid) { const ev = _RM.activeJob.events.find(e => String(e.event_id) === String(cd.eid)); if (ev) _rmShowEventDetail({ ...ev, lat: parseFloat(ev.lat), lon: parseFloat(ev.lon), dep: parseFloat(ev.depth_km || 0), mag: ev.mag != null ? parseFloat(ev.mag) : null }); }
     });
-  } else { Plotly.react('rm-ew-plt', allTrs, ly); }
+  } else { Plotly.react('rm-ew-plt', allTrs, ly).catch(() => { }); }
 }
 
 function _rmDrawMag() {
@@ -6608,7 +6717,7 @@ function _rmDrawMag() {
       if (eid) { const ev = _RM.activeJob.events.find(e => String(e.event_id) === String(eid)); if (ev) _rmShowEventDetail({ ...ev, lat: parseFloat(ev.lat), lon: parseFloat(ev.lon), dep: parseFloat(ev.depth_km || 0), mag: ev.mag != null ? parseFloat(ev.mag) : null }); }
     });
   }
-  else Plotly.react('rm-mag-plt', [tr], ly);
+  else Plotly.react('rm-mag-plt', [tr], ly).catch(() => { });
 }
 
 // ── Stats ─────────────────────────────────────────────────────────────────────
@@ -6757,7 +6866,7 @@ function rmOpen3d() {
     }
   }, 10000);
   _rmDraw3d();
-  setTimeout(() => { try { Plotly.Plots.resize('rm-3d-plt'); } catch (_) { } }, 150);
+  setTimeout(() => _swPlotlyResize('rm-3d-plt'), 150);
 }
 
 // Which enabled 3D layers are still streaming in (async-loaded, trigger a redraw
@@ -6794,7 +6903,7 @@ function rmClose3d() {
 }
 function _rm3dResize() {
   _rm3dApplySize();
-  setTimeout(() => { try { Plotly.Plots.resize('rm-3d-plt'); } catch (_) { } }, 80);
+  setTimeout(() => _swPlotlyResize('rm-3d-plt'), 80);
 }
 function _rm3dApplySize() {
   const wEl = document.getElementById('rm3d-w'), hEl = document.getElementById('rm3d-h');
@@ -6815,7 +6924,7 @@ function rmTab(tab) {
     // draw on first switch; subsequent draws when filter changes via _rmUpdate
     _rmDrawStat();
     setTimeout(() => {
-      ['rm-rms-plt', 'rm-fmd-plt'].forEach(id => { try { Plotly.Plots.resize(id); } catch (_) { } });
+      ['rm-rms-plt', 'rm-fmd-plt'].forEach(_swPlotlyResize);
     }, 80);
   } else if (tab === 'residual') {
     rmResLoad();   // fetch latest relocation residual (once per open unless re-selected)
@@ -7868,7 +7977,7 @@ function _rmDrawRx() {
       const cd = d.points[0]?.customdata;
       if (cd?.eid) { const ev = _RM.activeJob?.events.find(e => String(e.event_id) === String(cd.eid)); if (ev) _rmShowEventDetail({ ...ev, lat: +ev.lat, lon: +ev.lon, dep: +(ev.depth_km || 0), mag: ev.mag != null ? +ev.mag : null }); }
     });
-  } else { Plotly.react('rm-rx-plt', allTrs, ly); }
+  } else { Plotly.react('rm-rx-plt', allTrs, ly).catch(() => { }); }
 }
 
 // ── 3D scatter plot ───────────────────────────────────────────────────────────
@@ -8293,7 +8402,7 @@ function _rmDraw3d() {
     const liveScene = (plotDiv.layout && plotDiv.layout.scene)
       || (plotDiv._fullLayout && plotDiv._fullLayout.scene);
     if (liveScene && liveScene.camera) layout3d.scene.camera = liveScene.camera;
-    Plotly.react('rm-3d-plt', allTrs, layout3d).then(_settleLoading);
+    Plotly.react('rm-3d-plt', allTrs, layout3d).then(_settleLoading).catch(() => { });
     SW.add3DCompass('rm-3d-plt', plotDiv.parentElement, false, 'br');  // update direction only
   }
 }
@@ -8383,12 +8492,13 @@ function _rm3dCam(mode) {
     'ns': { eye: { x: 0, y: -2.5, z: 0.4 } },
     'ew': { eye: { x: 2.5, y: 0, z: 0.4 } },
   };
-  try { Plotly.relayout('rm-3d-plt', { 'scene.camera': cams[mode] }); } catch (_) { }
+  try { Plotly.relayout('rm-3d-plt', { 'scene.camera': cams[mode] }).catch(() => { }); } catch (_) { }
 }
 
 // Keyboard shortcut — Esc priority: waveform → 3D → result modal
 document.addEventListener('keydown', e => {
   if (e.key !== 'Escape') return;
+  if (_RM.polyDrawMode) { _rmCancelPolyDraw(); return; }
   if (!document.getElementById('sw-changelog-ovl').classList.contains('hidden')) { SW.closeChangelog(); return; }
   const ofv = document.getElementById('ofv-bd');
   if (ofv && !ofv.classList.contains('hidden')) { closeFileViewer(); return; }
@@ -8401,22 +8511,34 @@ document.addEventListener('keydown', e => {
   if (!document.getElementById('rm-bd').classList.contains('hidden')) closeResultModal();
 });
 
+// Resize a Plotly div only if Plotly has actually finished initializing it
+// (gd._fullLayout exists). Without this guard, a resize event landing either
+// before Plotly.newPlot() has resolved (e.g. while a modal's data is still
+// loading) or after Plotly.purge() has torn the div down (e.g. modal just
+// closed) makes Plotly's internal redraw touch undefined layout state and
+// throw "Cannot read properties of undefined (reading
+// '_redrawFromAutoMarginCount')". The .catch() covers the remaining window
+// where a purge/react race starts between this check and the resize itself.
+function _swPlotlyResize(id) {
+  const gd = document.getElementById(id);
+  if (!gd || !gd._fullLayout) return;
+  try { Plotly.Plots.resize(id).catch(() => { }); } catch (_) { }
+}
+
 // Resize handler: keep Plotly panels and Leaflet responsive
 window.addEventListener('resize', () => {
   if (!document.getElementById('rm-wv-bd').classList.contains('hidden')) {
-    try { Plotly.Plots.resize('rm-wv-plot'); } catch (_) { }
+    _swPlotlyResize('rm-wv-plot');
   }
   if (!document.getElementById('rm-3d-bd').classList.contains('hidden')) {
-    try { Plotly.Plots.resize('rm-3d-plt'); } catch (_) { }
+    _swPlotlyResize('rm-3d-plt');
   }
   if (!document.getElementById('tomo-3d-bd').classList.contains('hidden')) {
-    try { Plotly.Plots.resize('tomo-3d-plt'); } catch (_) { }
+    _swPlotlyResize('tomo-3d-plt');
   }
   if (document.getElementById('rm-bd').classList.contains('hidden')) return;
   if (_RM.map) _RM.map.invalidateSize();
-  ['rm-ns-plt', 'rm-ew-plt', 'rm-mag-plt', 'rm-rx-plt', 'rm-rms-plt', 'rm-fmd-plt'].forEach(id => {
-    try { Plotly.Plots.resize(id); } catch (_) { }
-  });
+  ['rm-ns-plt', 'rm-ew-plt', 'rm-mag-plt', 'rm-rx-plt', 'rm-rms-plt', 'rm-fmd-plt'].forEach(_swPlotlyResize);
 });
 
 // Velocity Model — Upload + Canvas Plot → modules/velest.js (VEL)

@@ -907,7 +907,7 @@ class TomographyModule {
     } else {
       const liveScene = plotDiv.layout && plotDiv.layout.scene;
       if (liveScene && liveScene.camera) layout.scene.camera = liveScene.camera;
-      await Plotly.react('tomo-3d-plt', traces, layout);
+      await Plotly.react('tomo-3d-plt', traces, layout).catch(() => { });
     }
   }
 
@@ -919,7 +919,7 @@ class TomographyModule {
       'ns': { eye: { x: 0, y: -2.5, z: 0.4 } },
       'ew': { eye: { x: 2.5, y: 0, z: 0.4 } },
     };
-    try { Plotly.relayout('tomo-3d-plt', { 'scene.camera': cams[mode] }); } catch (_) { }
+    try { Plotly.relayout('tomo-3d-plt', { 'scene.camera': cams[mode] }).catch(() => { }); } catch (_) { }
   }
 }
 
